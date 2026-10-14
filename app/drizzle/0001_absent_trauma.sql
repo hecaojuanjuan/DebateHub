@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `one_owner_per_community` ON `memberships` (`community_id`) WHERE "memberships"."role" = 'owner';
