@@ -13,6 +13,7 @@ export const communities = sqliteTable("communities", {
   name: text("name").notNull(),
   description: text("description").notNull(),
   visibility: text("visibility").notNull().default("private"),
+  joinApproval: integer("join_approval").notNull().default(0),
   createdAt: integer("created_at").notNull(),
 });
 export const users = sqliteTable("users", {
@@ -47,6 +48,41 @@ export const sessions = sqliteTable("sessions", {
     .references(() => users.id),
   expiresAt: integer("expires_at").notNull(),
 });
+export const membershipRequests = sqliteTable(
+  "membership_requests",
+  {
+    communityId: text("community_id")
+      .notNull()
+      .references(() => communities.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    status: text("status").notNull(),
+    createdAt: integer("created_at").notNull(),
+    reviewedAt: integer("reviewed_at"),
+    reviewedBy: text("reviewed_by").references(() => users.id),
+  },
+  (t) => [
+    primaryKey({ columns: [t.communityId, t.userId] }),
+    index("membership_requests_status_idx").on(t.communityId, t.status),
+  ],
+);
+export const accountCredentials = sqliteTable("account_credentials", {
+  username: text("username").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+export const accountSetupTokens = sqliteTable("account_setup_tokens", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  expiresAt: integer("expires_at").notNull(),
+});
 export const topics = sqliteTable(
   "topics",
   {
@@ -60,6 +96,8 @@ export const topics = sqliteTable(
     conLabel: text("con_label").notNull(),
     category: text("category").notNull(),
     status: text("status").notNull().default("open"),
+    withdrawn: integer("withdrawn").notNull().default(0),
+    updatedAt: integer("updated_at"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("topics_community_idx").on(t.communityId, t.createdAt)],
@@ -74,6 +112,7 @@ export const votes = sqliteTable(
       .notNull()
       .references(() => users.id),
     side: text("side").notNull(),
+    anonymous: integer("anonymous").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.topicId, t.userId] })],
 );
@@ -90,6 +129,7 @@ export const comments = sqliteTable(
     parentId: text("parent_id"),
     side: text("side").notNull(),
     content: text("content").notNull(),
+    anonymous: integer("anonymous").notNull().default(0),
     deleted: integer("deleted").notNull().default(0),
     createdAt: integer("created_at").notNull(),
   },

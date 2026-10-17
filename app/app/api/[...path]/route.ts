@@ -18,6 +18,15 @@ import {
   text,
   viewer,
 } from "@/lib/server";
+import { accountAction } from "@/lib/accounts";
+import {
+  manageMembers,
+  memberDirectory,
+  membershipJoinStatements,
+  membershipState,
+  prepareCommunityJoin,
+} from "@/lib/membership-management";
+import { manageTopic } from "@/lib/topic-management";
 export const dynamic = "force-dynamic";
 const headers = {
   "Cache-Control": "no-store",
@@ -43,53 +52,70 @@ async function handle(request: Request) {
     }
     if (request.method === "GET" && path === "members") {
       const cid = url.searchParams.get("community") || "unnc";
-      const { m } = await access(cid, user, true, true);
-      if (m?.role !== "owner")
-        throw new ApiError(403, "只有群主可以管理成员权限");
-      return json({
-        members: (
-          await all(
-            "SELECT u.id,u.nickname,m.role,m.created_at FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.community_id=? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,m.created_at",
-            cid,
-          )
-        ).map((m) => ({
-          id: m.id,
-          nickname: m.nickname,
-          role: m.role,
-          createdAt: m.created_at,
-        })),
-      });
+      return json(await memberDirectory(cid, user));
     }
     if (request.method === "GET" && path === "state") {
       const cid = url.searchParams.get("community") || "unnc";
       const c = await community(cid);
       const m = await membership(cid, user?.id);
+      const isModerator = ["owner", "admin"].includes(m?.role);
+      const review =
+        user && !m
+          ? await one(
+              "SELECT status FROM membership_requests WHERE community_id=? AND user_id=?",
+              cid,
+              user.id,
+            )
+          : null;
       const canRead = c.visibility === "public" || !!m;
       const count = await one(
         "SELECT COUNT(*) AS n FROM memberships WHERE community_id=?",
         cid,
       );
       const state: Record<string, any> = {
-        community: { ...c, memberCount: canRead ? count?.n : 0 },
+        community: {
+          ...c,
+          joinApproval: !!c.join_approval,
+          memberCount: canRead ? count?.n : 0,
+        },
+        pendingCount: isModerator
+          ? ((
+              await one(
+                "SELECT COUNT(*) AS n FROM membership_requests WHERE community_id=? AND status='pending'",
+                cid,
+              )
+            )?.n ?? 0)
+          : 0,
         viewer: user
           ? {
               id: user.id,
               nickname: user.nickname,
               role: m?.role ?? null,
+              joinStatus: review?.status ?? null,
               platformAdmin: !!user.platform_admin,
+              username:
+                (
+                  await one(
+                    "SELECT username FROM account_credentials WHERE user_id=?",
+                    user.id,
+                  )
+                )?.username ?? null,
             }
           : null,
         accessible: canRead,
         topics: [],
         topic: null,
         comments: [],
+        voters: [],
         stats: { pro: 0, con: 0 },
         mySide: null,
+        myVoteAnonymous: false,
       };
       if (canRead) {
         const rows = await all(
-          "SELECT t.*, (SELECT COUNT(*) FROM votes v WHERE v.topic_id=t.id) AS voteCount, (SELECT COUNT(*) FROM comments c WHERE c.topic_id=t.id AND c.deleted=0) AS commentCount FROM topics t WHERE community_id=? ORDER BY created_at DESC,id DESC",
+          "SELECT t.*, (SELECT COUNT(*) FROM votes v WHERE v.topic_id=t.id) AS voteCount, (SELECT COUNT(*) FROM comments c WHERE c.topic_id=t.id AND c.deleted=0) AS commentCount FROM topics t WHERE community_id=? AND (t.withdrawn=0 OR ?=1) ORDER BY t.withdrawn,created_at DESC,id DESC",
           cid,
+          isModerator ? 1 : 0,
         );
         state.topics = rows.map((t) => ({
           id: t.id,
@@ -99,6 +125,8 @@ async function handle(request: Request) {
           conLabel: t.con_label,
           category: t.category,
           status: t.status,
+          withdrawn: !!t.withdrawn,
+          updatedAt: t.updated_at,
           createdAt: t.created_at,
           voteCount: t.voteCount,
           commentCount: t.commentCount,
@@ -114,15 +142,28 @@ async function handle(request: Request) {
             tid,
           );
           for (const count of counts) state.stats[count.side] = count.n;
-          state.mySide = user
-            ? ((
-                await one(
-                  "SELECT side FROM votes WHERE topic_id=? AND user_id=?",
-                  tid,
-                  user.id,
-                )
-              )?.side ?? null)
+          if (m)
+            state.voters = (
+              await all(
+                "SELECT v.user_id,u.nickname,v.side,v.anonymous FROM votes v JOIN users u ON u.id=v.user_id WHERE v.topic_id=? ORDER BY v.anonymous,v.side,CASE WHEN v.anonymous=0 THEN u.nickname ELSE '' END,CASE WHEN v.anonymous=0 THEN u.id ELSE '' END",
+                tid,
+              )
+            ).map((v) => ({
+              userId: v.anonymous ? null : v.user_id,
+              nickname: v.anonymous ? "匿名成员" : v.nickname,
+              side: v.side,
+              anonymous: !!v.anonymous,
+              isMine: v.user_id === user?.id,
+            }));
+          const myVote = user
+            ? await one(
+                "SELECT side,anonymous FROM votes WHERE topic_id=? AND user_id=?",
+                tid,
+                user.id,
+              )
             : null;
+          state.mySide = myVote?.side ?? null;
+          state.myVoteAnonymous = !!myVote?.anonymous;
           state.comments = (
             await all(
               "SELECT c.*,u.nickname FROM comments c JOIN users u ON c.user_id=u.id WHERE topic_id=? ORDER BY created_at ASC,id ASC",
@@ -131,8 +172,10 @@ async function handle(request: Request) {
           ).map((c) => ({
             id: c.id,
             parentId: c.parent_id,
-            userId: c.user_id,
-            nickname: c.nickname,
+            userId: c.anonymous ? null : c.user_id,
+            nickname: c.anonymous ? "匿名辩友" : c.nickname,
+            anonymous: !!c.anonymous,
+            isMine: c.user_id === user?.id,
             side: c.side,
             content: c.deleted ? "此观点已被移除" : c.content,
             deleted: c.deleted,
@@ -147,6 +190,14 @@ async function handle(request: Request) {
     const cid = text(b.communityId ?? "unnc", "社区标识", 1, 50);
     const ip = request.headers.get("cf-connecting-ip") || "local";
     await limit(`request:${ip}`, 180);
+    if (path.startsWith("auth/")) {
+      const result = await accountAction(path, b, request, user, ip, cid);
+      return json(
+        result.data,
+        result.status ?? 200,
+        result.cookie ? { "Set-Cookie": result.cookie } : {},
+      );
+    }
     if (path === "admin/login") {
       await limit(`login:${ip}`, 10);
       const key = adminKey();
@@ -162,12 +213,10 @@ async function handle(request: Request) {
           403,
           "平台初始口令仅用于宁诺例辩；其他社群的管理权由各自群主分配",
         );
-      const uid =
-        (
-          await one(
-            "SELECT id FROM users WHERE platform_admin=1 ORDER BY created_at LIMIT 1",
-          )
-        )?.id || "initial-owner";
+      const initialOwner = await one(
+        "SELECT id,nickname FROM users WHERE platform_admin=1 ORDER BY created_at LIMIT 1",
+      );
+      const uid = initialOwner?.id || "initial-owner";
       await database().batch([
         database()
           .prepare(
@@ -175,7 +224,12 @@ async function handle(request: Request) {
           )
           .bind(
             uid,
-            text(b.nickname || "社区管理员", "昵称", 2, 20),
+            text(
+              b.nickname || initialOwner?.nickname || "社区管理员",
+              "昵称",
+              2,
+              20,
+            ),
             Date.now(),
           ),
         database()
@@ -184,26 +238,25 @@ async function handle(request: Request) {
           )
           .bind(cid, uid, "owner", Date.now()),
       ]);
-      return json({ ok: true }, 200, {
-        "Set-Cookie": await session(uid, request),
-      });
+      return json(
+        {
+          ok: true,
+          hasAccount: !!(await one(
+            "SELECT username FROM account_credentials WHERE user_id=?",
+            uid,
+          )),
+        },
+        200,
+        {
+          "Set-Cookie": await session(uid, request),
+        },
+      );
     }
     if (path === "join") {
       await limit(`join:${ip}`, 10);
-      const c = await community(cid);
-      const existing = await membership(cid, user?.id);
-      if (!existing && c.visibility !== "public") {
-        const invite = await one(
-          "SELECT * FROM invites WHERE token_hash=? AND community_id=? AND revoked=0 AND expires_at>?",
-          await hash(typeof b.invite === "string" ? b.invite : ""),
-          cid,
-          Date.now(),
-        );
-        if (!invite)
-          throw new ApiError(403, "邀请无效或已过期，请联系管理员获取新邀请");
-      }
       const nickname = text(b.nickname, "昵称", 2, 20);
       const uid = user?.id ?? id();
+      const plan = await prepareCommunityJoin(cid, uid, b.invite);
       const statements = [];
       if (!user)
         statements.push(
@@ -213,16 +266,10 @@ async function handle(request: Request) {
             )
             .bind(uid, nickname, Date.now()),
         );
-      statements.push(
-        database()
-          .prepare(
-            "INSERT OR IGNORE INTO memberships (community_id,user_id,role,created_at) VALUES (?,?,?,?)",
-          )
-          .bind(cid, uid, "member", Date.now()),
-      );
+      statements.push(...membershipJoinStatements(plan));
       await database().batch(statements);
       return json(
-        { ok: true },
+        { ok: true, ...(await membershipState(cid, uid)) },
         200,
         user ? {} : { "Set-Cookie": await session(uid, request) },
       );
@@ -281,9 +328,17 @@ async function handle(request: Request) {
       "invites/revoke",
       "topics/create",
       "topics/status",
+      "topics/update",
+      "topics/withdraw",
+      "members/review",
+      "members/remove",
     ].includes(path);
     await access(cid, user, true, isAdmin);
-    if (path === "members/role") {
+    if (["members/review", "members/remove", "members/leave"].includes(path)) {
+      await manageMembers(path, cid, user, b);
+    } else if (["topics/update", "topics/withdraw"].includes(path)) {
+      await manageTopic(path, cid, b);
+    } else if (path === "members/role") {
       const m = await membership(cid, user.id);
       if (m?.role !== "owner")
         throw new ApiError(403, "只有群主可以添加或撤销管理员");
@@ -303,11 +358,19 @@ async function handle(request: Request) {
     } else if (path === "settings") {
       if ((await membership(cid, user.id))?.role !== "owner")
         throw new ApiError(403, "只有群主可以更改社群可见性");
-      if (!["public", "private"].includes(b.visibility))
+      if (b.visibility === undefined && b.joinApproval === undefined)
+        throw new ApiError(400, "请提供需要修改的设置");
+      if (
+        b.visibility !== undefined &&
+        !["public", "private"].includes(b.visibility)
+      )
         throw new ApiError(400, "可见性无效");
+      if (b.joinApproval !== undefined && typeof b.joinApproval !== "boolean")
+        throw new ApiError(400, "入群审核设置无效");
       await run(
-        "UPDATE communities SET visibility=? WHERE id=?",
-        b.visibility,
+        "UPDATE communities SET visibility=COALESCE(?,visibility),join_approval=COALESCE(?,join_approval) WHERE id=?",
+        b.visibility ?? null,
+        b.joinApproval === undefined ? null : b.joinApproval ? 1 : 0,
         cid,
       );
     } else if (path === "invites/create") {
@@ -352,14 +415,27 @@ async function handle(request: Request) {
       await requireTopic(b.topicId, cid, true);
       if (!["pro", "con"].includes(b.side))
         throw new ApiError(400, "请选择正方或反方");
-      await run(
-        "INSERT INTO votes (topic_id,user_id,side) VALUES (?,?,?) ON CONFLICT(topic_id,user_id) DO UPDATE SET side=excluded.side",
-        b.topicId,
+      if (b.anonymous !== undefined && typeof b.anonymous !== "boolean")
+        throw new ApiError(400, "匿名选项必须为是或否");
+      const votePrivacy =
+        b.anonymous === undefined ? null : b.anonymous ? 1 : 0;
+      const result = await run(
+        "INSERT INTO votes (topic_id,user_id,side,anonymous) SELECT id,?,?,COALESCE(?,0) FROM topics WHERE id=? AND community_id=? AND status='open' AND withdrawn=0 AND EXISTS (SELECT 1 FROM memberships WHERE community_id=? AND user_id=?) ON CONFLICT(topic_id,user_id) DO UPDATE SET side=excluded.side,anonymous=COALESCE(?,votes.anonymous)",
         user.id,
         b.side,
+        votePrivacy,
+        b.topicId,
+        cid,
+        cid,
+        user.id,
+        votePrivacy,
       );
+      if (!result.meta.changes)
+        throw new ApiError(409, "辩题或成员状态已变化，请刷新后重试");
     } else if (path === "comments") {
       await requireTopic(b.topicId, cid, true);
+      if (b.anonymous !== undefined && typeof b.anonymous !== "boolean")
+        throw new ApiError(400, "匿名选项必须为是或否");
       await limit(`comment:${user.id}`, 15);
       const vote = await one(
         "SELECT side FROM votes WHERE topic_id=? AND user_id=?",
@@ -377,21 +453,30 @@ async function handle(request: Request) {
         if (!parent) throw new ApiError(400, "回复的观点不存在");
         parentId = parent.parent_id || parent.id;
       }
-      await run(
-        "INSERT INTO comments (id,topic_id,user_id,parent_id,side,content,created_at) VALUES (?,?,?,?,?,?,?)",
+      const result = await run(
+        "INSERT INTO comments (id,topic_id,user_id,parent_id,side,content,anonymous,created_at) SELECT ?,id,?,?,?,?,?,? FROM topics WHERE id=? AND community_id=? AND status='open' AND withdrawn=0 AND EXISTS (SELECT 1 FROM memberships WHERE community_id=? AND user_id=?)",
         id(),
-        b.topicId,
         user.id,
         parentId,
         vote.side,
         text(b.content, "观点", 2, 3000),
+        b.anonymous === true ? 1 : 0,
         Date.now(),
+        b.topicId,
+        cid,
+        cid,
+        user.id,
       );
+      if (!result.meta.changes)
+        throw new ApiError(409, "辩题或成员状态已变化，请刷新后重试");
     } else if (path === "comments/delete") {
       const comment = await one(
-        "SELECT c.* FROM comments c JOIN topics t ON t.id=c.topic_id WHERE c.id=? AND t.community_id=?",
+        "SELECT c.* FROM comments c JOIN topics t ON t.id=c.topic_id WHERE c.id=? AND t.community_id=? AND (t.withdrawn=0 OR ?=1)",
         b.commentId,
         cid,
+        ["owner", "admin"].includes((await membership(cid, user.id))?.role)
+          ? 1
+          : 0,
       );
       if (!comment) throw new ApiError(404, "观点不存在");
       const member = await membership(cid, user.id);

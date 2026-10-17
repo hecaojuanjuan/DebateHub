@@ -28,7 +28,14 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { Comment, Side, State, Member, CommunityLink } from "@/lib/types";
+import type {
+  Comment,
+  Side,
+  State,
+  Member,
+  JoinRequest,
+  CommunityLink,
+} from "@/lib/types";
 import CommunityModals, { type ModalName } from "./community-modals";
 
 const sideName = (side: Side) => (side === "pro" ? "正方" : "反方");
@@ -55,14 +62,18 @@ export default function DebateApp({
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [invite, setInvite] = useState("");
+  const [setupToken, setSetupToken] = useState("");
   const [inviteUrl, setInviteUrl] = useState("");
   const [filter, setFilter] = useState<"all" | Side>("all");
   const [sort, setSort] = useState("newest");
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
+  const [anonymous, setAnonymous] = useState(false);
+  const [anonymousVote, setAnonymousVote] = useState(false);
   const [reply, setReply] = useState<Comment | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[] | null>(null);
+  const [requests, setRequests] = useState<JoinRequest[] | null>(null);
   const [communities, setCommunities] = useState<CommunityLink[] | null>(null);
   const seq = useRef(0);
   const mutationLock = useRef(false);
@@ -89,6 +100,9 @@ export default function DebateApp({
     }
   }, [communityId, selectedTopic]);
   useEffect(() => {
+    setAnonymousVote(data?.mySide ? data.myVoteAnonymous : false);
+  }, [data?.topic?.id, data?.mySide, data?.myVoteAnonymous]);
+  useEffect(() => {
     void refresh();
     const timer = setInterval(() => {
       if (!document.hidden) void refresh();
@@ -102,9 +116,15 @@ export default function DebateApp({
     };
   }, [refresh]);
   useEffect(() => {
-    const token = new URLSearchParams(window.location.hash.slice(1)).get(
-      "invite",
-    );
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const setup = fragment.get("setup");
+    if (setup) {
+      setSetupToken(setup);
+      setModal("account");
+      history.replaceState(null, "", location.pathname);
+      return;
+    }
+    const token = fragment.get("invite");
     if (token) {
       setInvite(token);
       setModal("join");
@@ -122,15 +142,26 @@ export default function DebateApp({
     );
     const result = (await response.json()) as {
       members: Member[];
+      requests: JoinRequest[];
       error?: string;
     };
-    if (!response.ok) throw new Error(result.error);
+    if (!response.ok) {
+      setMembers(null);
+      setRequests(null);
+      throw new Error(result.error);
+    }
     setMembers(result.members);
+    setRequests(result.requests);
   }, [communityId]);
   useEffect(() => {
     if (modal === "members") {
       setMembers(null);
       void loadMembers().catch((e) => setToast(e.message));
+      const timer = setInterval(() => {
+        if (!document.hidden)
+          void loadMembers().catch((e) => setToast(e.message));
+      }, 2500);
+      return () => clearInterval(timer);
     }
     if (modal === "switch") {
       setCommunities(null);
@@ -164,9 +195,15 @@ export default function DebateApp({
         const result = (await response.json()) as Record<string, any>;
         if (!response.ok) throw new Error(result.error || "操作失败，请重试");
         done?.(result);
-        if (path === "join") setInvite("");
+        if (
+          path === "join" ||
+          path === "auth/register" ||
+          (path === "auth/login" && result.joined)
+        )
+          setInvite("");
         if (path === "invites/revoke") setInviteUrl("");
-        if (path === "members/role") await loadMembers();
+        if (["members/role", "members/review", "members/remove"].includes(path))
+          await loadMembers();
         await refresh();
       } catch (e) {
         setToast(e instanceof Error ? e.message : "操作失败，请重试");
@@ -178,6 +215,17 @@ export default function DebateApp({
   }
   const isAdmin = ["owner", "admin"].includes(data?.viewer?.role ?? "");
   const joined = !!data?.viewer?.role;
+  useEffect(() => {
+    if (modal === "members" && !isAdmin) setModal(null);
+  }, [modal, isAdmin]);
+  useEffect(() => {
+    if (
+      selectedTopic &&
+      data &&
+      !data.topics.some((t) => t.id === selectedTopic)
+    )
+      setSelectedTopic("");
+  }, [data, selectedTopic]);
   const topic = data?.topic;
   const total = (data?.stats.pro ?? 0) + (data?.stats.con ?? 0);
   const proPercent = total ? Math.round((data!.stats.pro / total) * 100) : 0;
@@ -195,8 +243,29 @@ export default function DebateApp({
       setModal("join");
       return;
     }
-    perform("votes", { topicId: topic?.id, side }, () =>
-      setToast(`已选择${sideName(side)}，期待你的观点`),
+    perform(
+      "votes",
+      { topicId: topic?.id, side, anonymous: anonymousVote },
+      () =>
+        setToast(`已${anonymousVote ? "匿名" : "按昵称"}选择${sideName(side)}`),
+    );
+  };
+  const changeVotePrivacy = (checked: boolean) => {
+    if (!joined) {
+      setModal("join");
+      return;
+    }
+    if (!data?.mySide) {
+      setAnonymousVote(checked);
+      return;
+    }
+    perform(
+      "votes",
+      { topicId: topic?.id, side: data.mySide, anonymous: checked },
+      () => {
+        setAnonymousVote(checked);
+        setToast(checked ? "持方已改为匿名展示" : "持方已改为按昵称展示");
+      },
     );
   };
   const openInvite = () => {
@@ -214,6 +283,7 @@ export default function DebateApp({
       <div className="comment-main">
         <div className="comment-byline">
           <strong>{c.nickname}</strong>
+          {c.isMine && <span className="mine-label">你</span>}
           <span className={`side-label ${c.side}`}>{sideName(c.side)}</span>
           <time>{formatTime(c.createdAt)}</time>
         </div>
@@ -229,12 +299,12 @@ export default function DebateApp({
                 setReply(c);
                 composer.current?.focus();
               }}
-              disabled={topic?.status === "closed"}
+              disabled={topic?.withdrawn || topic?.status === "closed"}
             >
               <MessageCircle size={14} />
               回复
             </button>
-            {(isAdmin || data?.viewer?.id === c.userId) && (
+            {(isAdmin || c.isMine) && (
               <button onClick={() => setDeleteTarget(c.id)}>
                 <Trash2 size={13} />
                 移除
@@ -341,7 +411,15 @@ export default function DebateApp({
           </div>
           <div className="topbar-actions">
             <span className="header-caption">让观点相遇，让思考发生</span>
-            {joined ? (
+            {isAdmin && (
+              <button
+                className="button small outline"
+                onClick={() => setModal("members")}
+              >
+                成员管理{data?.pendingCount ? `（${data.pendingCount}）` : ""}
+              </button>
+            )}
+            {data?.viewer ? (
               <>
                 <button
                   className="user-chip"
@@ -363,7 +441,11 @@ export default function DebateApp({
                   aria-label="退出登录"
                   onClick={() =>
                     perform("logout", {}, () =>
-                      setToast("已退出，私密社区需邀请链接重新加入"),
+                      setToast(
+                        data?.viewer?.username
+                          ? "已退出，可使用用户名和密码重新登录"
+                          : "已退出，昵称参与需重新通过邀请加入",
+                      ),
                     )
                   }
                 >
@@ -373,9 +455,9 @@ export default function DebateApp({
             ) : (
               <button
                 className="button small dark"
-                onClick={() => setModal("join")}
+                onClick={() => setModal(invite ? "join" : "login")}
               >
-                加入社区
+                登录 / 注册
                 <ArrowUpRight size={15} />
               </button>
             )}
@@ -449,22 +531,50 @@ export default function DebateApp({
                 <LockKeyhole size={29} />
               </div>
               <span className="eyebrow">A COMMUNITY, BY INVITATION</span>
-              <h2>好的讨论，从这里开始。</h2>
+              <h2>
+                {data.viewer?.joinStatus === "pending"
+                  ? "申请已提交，等待审核。"
+                  : "好的讨论，从这里开始。"}
+              </h2>
               <p>{data.community.description}</p>
               <div className="private-pill">
                 <ShieldCheck size={14} />
                 这是一个私密社区 · 仅受邀成员可见
               </div>
-              <button className="button dark" onClick={() => setModal("join")}>
-                {invite ? "接受邀请，加入讨论" : "使用邀请加入"}
+              {data.viewer?.joinStatus === "pending" && (
+                <p>群主或管理员同意后，这里会自动显示社区内容。</p>
+              )}
+              {data.viewer?.joinStatus === "rejected" && (
+                <p>上次入群申请未通过，可联系管理员或使用有效邀请重新申请。</p>
+              )}
+              {data.viewer?.joinStatus === "removed" && (
+                <p>你已被移出此社群，使用有效邀请重新申请后需管理员同意。</p>
+              )}
+              <button
+                className="button dark"
+                disabled={data.viewer?.joinStatus === "pending"}
+                onClick={() => setModal("join")}
+              >
+                {data.viewer?.joinStatus === "pending"
+                  ? "等待审核中"
+                  : invite
+                    ? data.community.joinApproval
+                      ? "接受邀请，申请加入"
+                      : "接受邀请，加入讨论"
+                    : "使用邀请加入"}
                 <ArrowRight size={17} />
               </button>
               <button className="text-button" onClick={() => setModal("login")}>
-                我是管理员 <ArrowUpRight size={14} />
+                已有账号，登录 <ArrowUpRight size={14} />
               </button>
             </section>
           ) : (
             <>
+              {data.viewer?.joinStatus === "pending" && (
+                <p className="membership-banner">
+                  入群申请正在审核，通过后即可投票和发言。
+                </p>
+              )}
               <div className="section-heading">
                 <div>
                   <span className="orange-dash" />
@@ -511,7 +621,11 @@ export default function DebateApp({
                         <div>
                           <span className="category">
                             {t.category} ·{" "}
-                            {t.status === "open" ? "讨论中" : "已结束"}
+                            {t.withdrawn
+                              ? "已撤回"
+                              : t.status === "open"
+                                ? "讨论中"
+                                : "已结束"}
                           </span>
                           <h3>{t.title}</h3>
                           <span className="muted">
@@ -555,7 +669,11 @@ export default function DebateApp({
                           className={`status-pill ${topic.status === "closed" ? "closed" : ""}`}
                         >
                           <span />
-                          {topic.status === "open" ? "正在讨论" : "讨论已结束"}
+                          {topic.withdrawn
+                            ? "已撤回 · 管理员可见"
+                            : topic.status === "open"
+                              ? "正在讨论"
+                              : "讨论已结束"}
                         </span>
                       </div>
                       <span className="motion-overline">
@@ -563,6 +681,36 @@ export default function DebateApp({
                       </span>
                       <h2>{topic.title}</h2>
                       <p className="motion-description">{topic.description}</p>
+                      {topic.withdrawn && (
+                        <p className="membership-banner">
+                          这道辩题已对成员隐藏。已有讨论与投票保留，恢复后成员可再次查看。
+                        </p>
+                      )}
+                      {isAdmin && (
+                        <div className="topic-actions">
+                          <button
+                            className="button small outline"
+                            onClick={() => setModal("editTopic")}
+                          >
+                            修改辩题
+                          </button>
+                          <button
+                            className="button small outline"
+                            disabled={busy}
+                            onClick={() =>
+                              topic.withdrawn
+                                ? perform(
+                                    "topics/withdraw",
+                                    { topicId: topic.id, withdrawn: false },
+                                    () => setToast("辩题已恢复"),
+                                  )
+                                : setModal("withdrawTopic")
+                            }
+                          >
+                            {topic.withdrawn ? "恢复辩题" : "撤回辩题"}
+                          </button>
+                        </div>
+                      )}
                       <div className="motion-footer">
                         <span>
                           <Users size={15} />
@@ -586,13 +734,39 @@ export default function DebateApp({
                             : "选择持方，加入这场思想碰撞"}
                         </span>
                       </div>
+                      <div className="vote-privacy">
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={anonymousVote}
+                            onChange={(e) =>
+                              changeVotePrivacy(e.target.checked)
+                            }
+                            disabled={
+                              busy ||
+                              topic.withdrawn ||
+                              topic.status === "closed"
+                            }
+                          />
+                          匿名投票
+                        </label>
+                        <span>
+                          {anonymousVote
+                            ? "持方列表显示「匿名成员」，投票仍计入比例"
+                            : "持方列表显示你的昵称；可勾选后再选择持方"}
+                        </span>
+                      </div>
                       <div className="stance-grid">
                         {(["pro", "con"] as Side[]).map((side) => (
                           <button
                             key={side}
                             className={`stance-card ${side} ${data.mySide === side ? "selected" : ""}`}
                             onClick={() => vote(side)}
-                            disabled={busy || topic.status === "closed"}
+                            disabled={
+                              busy ||
+                              topic.withdrawn ||
+                              topic.status === "closed"
+                            }
                           >
                             <div>
                               <span className="stance-label">
@@ -675,6 +849,7 @@ export default function DebateApp({
                               topicId: topic.id,
                               content: draft,
                               parentId: reply?.id,
+                              anonymous,
                             },
                             () => {
                               setDraft("");
@@ -704,13 +879,33 @@ export default function DebateApp({
                           onChange={(e) => setDraft(e.target.value)}
                           maxLength={3000}
                           rows={3}
-                          disabled={topic.status === "closed"}
+                          disabled={
+                            topic.withdrawn || topic.status === "closed"
+                          }
                           placeholder={
                             topic.status === "closed"
                               ? "本次讨论已结束，感谢每一个认真思考的你。"
                               : "说说你的理由，让观点被看见…"
                           }
                         />
+                        <div className="composer-identity">
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={anonymous}
+                              onChange={(e) => setAnonymous(e.target.checked)}
+                              disabled={
+                                topic.withdrawn || topic.status === "closed"
+                              }
+                            />
+                            匿名发表
+                          </label>
+                          <span>
+                            {anonymous
+                              ? "本条发言显示为「匿名辩友」；投票匿名由上方单独设置"
+                              : `以「${data.viewer?.nickname || "社群昵称"}」发表观点`}
+                          </span>
+                        </div>
                         <div className="composer-bottom">
                           <span>
                             {data.mySide ? (
@@ -727,6 +922,7 @@ export default function DebateApp({
                             className="button small dark"
                             disabled={
                               busy ||
+                              topic.withdrawn ||
                               topic.status === "closed" ||
                               (joined && draft.trim().length < 2)
                             }
@@ -819,6 +1015,38 @@ export default function DebateApp({
                           ? `共 ${total} 人参与持方 · 约每 2 秒同步`
                           : "暂无持方，成为第一个表达立场的人"}
                       </div>
+                      {joined ? (
+                        <details className="vote-detail">
+                          <summary>
+                            查看成员持方
+                            <ChevronDown size={14} />
+                          </summary>
+                          <p>可查看当前选择；匿名票不显示昵称。</p>
+                          {data.voters.length ? (
+                            <ul className="voter-list">
+                              {data.voters.map((v, index) => (
+                                <li key={v.userId || `anonymous-${index}`}>
+                                  <span className="voter-name">
+                                    {v.nickname}
+                                    {v.isMine && <small>你</small>}
+                                  </span>
+                                  <span className={`side-label ${v.side}`}>
+                                    {sideName(v.side)}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="voter-empty">
+                              还没有成员选择持方
+                            </div>
+                          )}
+                        </details>
+                      ) : (
+                        <p className="voter-join-note">
+                          加入社群后可查看成员的具体持方。
+                        </p>
+                      )}
                     </section>
                     <section className="community-card panel">
                       <span className="eyebrow">OUR LITTLE CORNER</span>
@@ -942,6 +1170,8 @@ export default function DebateApp({
         data={data}
         busy={busy}
         invite={invite}
+        setupToken={setupToken}
+        clearSetupToken={() => setSetupToken("")}
         inviteUrl={inviteUrl}
         communityId={communityId}
         deleteTarget={deleteTarget}
@@ -950,6 +1180,7 @@ export default function DebateApp({
         perform={perform}
         selectTopic={changeTopic}
         members={members}
+        requests={requests}
         communities={communities}
       />
     </div>

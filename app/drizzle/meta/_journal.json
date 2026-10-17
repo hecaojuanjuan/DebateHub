@@ -15,6 +15,34 @@
       "when": 1791958824649,
       "tag": "0001_absent_trauma",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792031955692,
+      "tag": "0002_handy_mojo",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792033615115,
+      "tag": "0003_late_pepper_potts",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792212232798,
+      "tag": "0004_unknown_red_shift",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792223108396,
+      "tag": "0005_hard_guardsmen",
+      "breakpoints": true
     }
   ]
 }

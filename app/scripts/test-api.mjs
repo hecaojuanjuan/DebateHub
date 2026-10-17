@@ -56,7 +56,10 @@ const slug = `qa-${Date.now()}`;
 const base = { communityId: slug };
 const locked = await outsider("state");
 check(
-  !locked.accessible && !locked.topic && locked.comments.length === 0,
+  !locked.accessible &&
+    !locked.topic &&
+    locked.comments.length === 0 &&
+    locked.voters.length === 0,
   "private topics, comments, and statistics are hidden from anonymous visitors",
 );
 await admin("admin/login", { key: "incorrect", communityId: "unnc" }, 401);
@@ -174,6 +177,64 @@ check(
   state.stats.pro === 1 && state.stats.con === 1,
   "concurrent repeated stance requests count each member once",
 );
+check(
+  state.voters.length === 2 &&
+    state.voters.some((v) => v.nickname === "测试正方" && v.side === "pro") &&
+    state.voters.some((v) => v.nickname === "测试反方" && v.side === "con"),
+  "members can see each other's individual stance within the community",
+);
+await alice("votes", { ...base, topicId, side: "pro", anonymous: true });
+let privateVoteView = await bob(`state?community=${slug}&topic=${topicId}`);
+check(
+  privateVoteView.stats.pro === 1 &&
+    privateVoteView.stats.con === 1 &&
+    privateVoteView.voters.some(
+      (v) =>
+        v.anonymous &&
+        v.nickname === "匿名成员" &&
+        v.userId === null &&
+        !v.isMine,
+    ) &&
+    !privateVoteView.voters.some(
+      (v) => v.nickname === "测试正方" || v.userId === aliceId,
+    ),
+  "anonymous votes retain counts while hiding the voter name and user ID from members",
+);
+const ownVoteView = await alice(`state?community=${slug}&topic=${topicId}`);
+check(
+  ownVoteView.myVoteAnonymous &&
+    ownVoteView.mySide === "pro" &&
+    ownVoteView.voters.some(
+      (v) => v.anonymous && v.isMine && v.userId === null,
+    ),
+  "authors can recover their anonymous vote setting and recognize only their own vote",
+);
+const ownerVoteView = await admin(`state?community=${slug}&topic=${topicId}`);
+check(
+  ownerVoteView.voters
+    .filter((v) => v.anonymous)
+    .every((v) => v.nickname === "匿名成员" && v.userId === null && !v.isMine),
+  "anonymous voter identities are also hidden from community owners",
+);
+await Promise.all(
+  Array.from({ length: 5 }, () =>
+    alice("votes", { ...base, topicId, side: "pro" }),
+  ),
+);
+check(
+  (await alice(`state?community=${slug}&topic=${topicId}`)).myVoteAnonymous &&
+    (await bob(`state?community=${slug}&topic=${topicId}`)).voters.length === 2,
+  "repeated votes without a privacy flag preserve anonymity and do not add voters",
+);
+await alice("votes", { ...base, topicId, side: "pro", anonymous: false });
+check(
+  (await bob(`state?community=${slug}&topic=${topicId}`)).voters.some(
+    (v) => v.userId === aliceId && v.nickname === "测试正方" && !v.anonymous,
+  ),
+  "voters can explicitly switch their own vote back to named display",
+);
+await alice("votes", { ...base, topicId, side: "pro", anonymous: true });
+await bob("votes", { ...base, topicId, side: "con", anonymous: "false" }, 400);
 await alice("comments", {
   ...base,
   topicId,
@@ -192,6 +253,78 @@ await bob("comments", {
   content: "也需要考虑基础课程之间的先修关系。",
 });
 await bob("votes", { ...base, topicId: other.id, side: "con" });
+await alice("votes", { ...base, topicId: other.id, side: "pro" });
+await alice("comments", {
+  ...base,
+  topicId: other.id,
+  content: "这是匿名发表的观点，只有观点和持方会展示。",
+  anonymous: true,
+});
+let anonymousState = await bob(`state?community=${slug}&topic=${other.id}`);
+const anonymousId = anonymousState.comments[0].id;
+check(
+  anonymousState.comments[0].anonymous === true &&
+    anonymousState.comments[0].nickname === "匿名辩友" &&
+    anonymousState.comments[0].userId === null &&
+    anonymousState.comments[0].isMine === false,
+  "anonymous comments hide the author's nickname and user ID in another member's API response",
+);
+const ownerView = await admin(`state?community=${slug}&topic=${other.id}`);
+check(
+  ownerView.comments[0].userId === null &&
+    ownerView.comments[0].nickname === "匿名辩友",
+  "owner and administrator views do not reveal anonymous authors",
+);
+const authorView = await alice(`state?community=${slug}&topic=${other.id}`);
+check(
+  authorView.comments[0].isMine === true &&
+    authorView.comments[0].userId === null,
+  "authors can recognize their own anonymous comment without exposing the identity field",
+);
+await bob("comments", {
+  ...base,
+  topicId: other.id,
+  parentId: anonymousId,
+  content: "这条回复也选择匿名发表。",
+  anonymous: true,
+});
+anonymousState = await alice(`state?community=${slug}&topic=${other.id}`);
+check(
+  anonymousState.comments[1].parentId === anonymousId &&
+    anonymousState.comments[1].anonymous &&
+    anonymousState.comments[1].nickname === "匿名辩友" &&
+    anonymousState.comments[1].userId === null,
+  "replies can independently be anonymous and retain their thread and stance",
+);
+await bob("comments/delete", { ...base, commentId: anonymousId }, 403);
+await alice("comments/delete", { ...base, commentId: anonymousId });
+check(
+  (await bob(`state?community=${slug}&topic=${other.id}`)).comments[0]
+    .deleted === 1,
+  "anonymous authors can still remove their own comments and others cannot",
+);
+await alice("comments", {
+  ...base,
+  topicId: other.id,
+  content: "这条恢复为昵称发表。",
+  anonymous: false,
+});
+check(
+  (await bob(`state?community=${slug}&topic=${other.id}`)).comments.some(
+    (c) => c.nickname === "测试正方" && !c.anonymous,
+  ),
+  "named posting remains available independently of previous anonymous posts",
+);
+await alice(
+  "comments",
+  {
+    ...base,
+    topicId: other.id,
+    content: "不能用字符串伪造匿名选项。",
+    anonymous: "false",
+  },
+  400,
+);
 await bob(
   "comments",
   {
@@ -215,6 +348,13 @@ check(
     state.comments[0].side === "pro",
   "changing stance updates ratios while preserving historical comment stance",
 );
+check(
+  (await alice(`state?community=${slug}&topic=${topicId}`)).myVoteAnonymous &&
+    state.voters.some(
+      (v) => v.anonymous && v.side === "con" && v.userId === null,
+    ),
+  "switching sides preserves anonymous voting independently of named comments",
+);
 await alice("comments/delete", { ...base, commentId });
 state = await bob(`state?community=${slug}&topic=${topicId}`);
 check(
@@ -226,6 +366,7 @@ check(
 await admin("topics/status", { ...base, topicId, status: "closed" });
 await bob("comments", { ...base, topicId, content: "关闭后不能发言" }, 409);
 await alice("votes", { ...base, topicId, side: "pro" }, 409);
+await alice("votes", { ...base, topicId, side: "con", anonymous: false }, 409);
 check(
   (await alice(`state?community=${slug}&topic=${topicId}`)).comments.length ===
     2,
@@ -235,6 +376,16 @@ await admin("settings", { ...base, visibility: "public" });
 check(
   (await outsider(`state?community=${slug}&topic=${topicId}`)).accessible,
   "public visibility permits anonymous reading",
+);
+const publicView = await outsider(`state?community=${slug}&topic=${other.id}`);
+check(
+  publicView.voters.length === 0 &&
+    publicView.comments
+      .filter((c) => c.anonymous)
+      .every(
+        (c) => c.nickname === "匿名辩友" && c.userId === null && !c.isMine,
+      ),
+  "public visitors see discussion content without member voter identities or anonymous author information",
 );
 await outsider("votes", { ...base, topicId: other.id, side: "pro" }, 401);
 await admin("settings", { ...base, visibility: "private" });

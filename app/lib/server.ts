@@ -124,6 +124,7 @@ export async function requireTopic(
     communityId,
   );
   if (!t) throw new ApiError(404, "辩题不存在");
+  if (open && t.withdrawn) throw new ApiError(409, "该辩题已撤回，暂不能参与");
   if (open && t.status !== "open")
     throw new ApiError(409, "本次讨论已结束，仍可查看全部观点");
   return t;

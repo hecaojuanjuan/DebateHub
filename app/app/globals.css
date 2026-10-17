@@ -1443,6 +1443,7 @@ footer > span:last-child {
   font-size: 12px;
 }
 .modal {
+  margin: auto;
   padding: 0;
   border: 1px solid #e5e5d9;
   border-radius: 16px;
@@ -1492,6 +1493,13 @@ footer > span:last-child {
 .field textarea {
   font-size: 12px;
 }
+.username-hint {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1511,6 +1519,56 @@ footer > span:last-child {
 }
 .modal form > .button.full {
   margin-top: 9px;
+}
+.account-button {
+  margin-top: 12px;
+}
+.management-heading {
+  font-size: 15px;
+  margin: 22px 0 10px;
+}
+.management-heading span {
+  color: var(--muted);
+  margin-left: 6px;
+  font-size: 12px;
+}
+.management-empty {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.management-actions,
+.topic-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.management-actions {
+  justify-content: flex-end;
+}
+.topic-actions {
+  margin: 18px 0;
+}
+.management-confirm,
+.membership-banner {
+  padding: 15px;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f5f3e9;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.management-confirm p {
+  margin: 9px 0 14px;
+}
+@media (max-width: 600px) {
+  .member-row {
+    flex-wrap: wrap;
+  }
+  .member-row .management-actions {
+    width: 100%;
+  }
 }
 .setting-row {
   display: flex;
@@ -2194,6 +2252,10 @@ footer > span:last-child {
   .modal h2 {
     font-size: 22px;
   }
+  .modal .field input,
+  .modal .field textarea {
+    font-size: 16px;
+  }
   .toast {
     left: 50%;
     font-size: 11px;
@@ -2362,5 +2424,164 @@ footer > span:last-child {
   }
   .community-option + .button.full {
     margin-top: 16px;
+  }
+}
+.composer-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border-top: 1px solid #e9ebe1;
+  padding-top: 11px;
+  margin-top: 8px;
+}
+.composer-identity label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #738467;
+  cursor: pointer;
+}
+.composer-identity input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #71865e;
+}
+.composer-identity > span {
+  font-size: 10px;
+  color: #a4a996;
+  line-height: 1.7;
+}
+.mine-label {
+  font-size: 9px;
+  color: #8b9978;
+  background: #f0f3e8;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.vote-detail {
+  margin-top: 15px;
+  padding-top: 14px;
+  border-top: 1px solid #eeeee7;
+}
+.vote-detail summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #6f815d;
+  cursor: pointer;
+  list-style: none;
+}
+.vote-detail summary::-webkit-details-marker {
+  display: none;
+}
+.vote-detail[open] summary > svg {
+  transform: rotate(180deg);
+}
+.vote-detail > p {
+  font-size: 10px;
+  color: #a0a58f;
+  line-height: 1.7;
+  margin-top: 10px;
+}
+.voter-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 230px;
+  overflow: auto;
+}
+.voter-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 9px 0;
+  border-bottom: 1px solid #f0f1e9;
+  font-size: 11px;
+}
+.voter-list li:last-child {
+  border: 0;
+}
+.voter-name {
+  overflow-wrap: anywhere;
+}
+.voter-name small {
+  font-size: 8px;
+  color: #a6ad95;
+  margin-left: 5px;
+}
+.voter-empty,
+.voter-join-note {
+  font-size: 10px;
+  color: #acb09d;
+  padding-top: 12px;
+  line-height: 1.8;
+}
+.voter-list .side-label {
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .composer-identity {
+    gap: 9px;
+    flex-wrap: wrap;
+  }
+  .composer-identity > span {
+    font-size: 10px;
+  }
+  .vote-detail summary {
+    font-size: 10px;
+  }
+  .vote-detail > p,
+  .voter-join-note {
+    font-size: 9px;
+  }
+  .voter-list li {
+    font-size: 10px;
+  }
+  .voter-list .side-label {
+    font-size: 8px;
+  }
+}
+.vote-privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 11px 13px;
+  border: 1px solid #e6e9dc;
+  border-radius: 7px;
+  background: #f1f4e9;
+}
+.vote-privacy label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: #6c805d;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.vote-privacy input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #71865e;
+}
+.vote-privacy > span {
+  font-size: 10px;
+  line-height: 1.7;
+  color: #99a38a;
+}
+@media (max-width: 700px) {
+  .vote-privacy {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .vote-privacy > span {
+    font-size: 10px;
   }
 }
