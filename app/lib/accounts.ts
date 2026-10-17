@@ -101,7 +101,7 @@ export async function accountAction(
   }
   if (!["auth/login", "auth/register"].includes(path))
     throw new ApiError(404, "接口不存在");
-  await limit(`account:${ip}`, 30);
+  await limit(`account:${ip}`, 300);
   const name = username(b.username);
   await limit(`account-name:${await hash(name)}`, 15);
   const secret = password(

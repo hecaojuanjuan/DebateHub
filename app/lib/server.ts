@@ -48,7 +48,14 @@ export async function run(sql: string, ...args: (string | number | null)[]) {
     .bind(...args)
     .run();
 }
-export async function seed() {
+let seeded: Promise<void> | undefined;
+export function seed() {
+  return (seeded ??= seedDatabase().catch((error) => {
+    seeded = undefined;
+    throw error;
+  }));
+}
+async function seedDatabase() {
   if (await one("SELECT id FROM communities WHERE id='unnc'")) return;
   const now = Date.now();
   const result = await run(
@@ -168,6 +175,7 @@ export async function body(request: Request) {
     throw new ApiError(400, "请求格式无效");
   }
 }
+let lastLimitCleanup = 0;
 export async function limit(key: string, max: number) {
   const bucket = `${Math.floor(Date.now() / 60000)}:${key}`;
   const r = await one(
@@ -176,10 +184,11 @@ export async function limit(key: string, max: number) {
   );
   if (Number(r?.count) > max)
     throw new ApiError(429, "操作太频繁，请一分钟后重试");
-  await run(
-    "DELETE FROM rate_limits WHERE key < ?",
-    `${Math.floor(Date.now() / 60000) - 2}:`,
-  );
+  const minute = Math.floor(Date.now() / 60000);
+  if (lastLimitCleanup < minute) {
+    lastLimitCleanup = minute;
+    await run("DELETE FROM rate_limits WHERE key < ?", `${minute - 2}:`);
+  }
 }
 export async function session(userId: string, request: Request) {
   const token = id() + id();

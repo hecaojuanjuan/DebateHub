@@ -93,6 +93,8 @@ const config = {
   compatibility_flags: built.compatibility_flags,
   no_bundle: built.no_bundle,
   rules: built.rules,
+  durable_objects: built.durable_objects,
+  migrations: built.migrations,
   assets: {
     ...built.assets,
     directory: path.resolve(buildRoot, built.assets.directory),

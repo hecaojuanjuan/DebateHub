@@ -27,6 +27,10 @@ import {
   prepareCommunityJoin,
 } from "@/lib/membership-management";
 import { manageTopic } from "@/lib/topic-management";
+import { readState, stateContext, stateTag } from "@/lib/state";
+import { publishChange } from "@/lib/realtime";
+import { PasswordCapacityError } from "@/lib/passwords";
+import { matchesTag } from "@/lib/http-cache";
 export const dynamic = "force-dynamic";
 const headers = {
   "Cache-Control": "no-store",
@@ -40,6 +44,24 @@ async function handle(request: Request) {
     await seed();
     const url = new URL(request.url);
     const path = url.pathname.replace(/^\/api\//, "");
+    if (request.method === "GET" && ["state", "members"].includes(path)) {
+      const cid = url.searchParams.get("community") || "unnc";
+      const c = await stateContext(request, cid);
+      if (path === "members" && !["owner", "admin"].includes(c.role))
+        throw new ApiError(403, "此操作需要社群群主或管理员权限");
+      const requested = url.searchParams.get("topic") || "";
+      const tag = await stateTag(c, requested, path);
+      if (matchesTag(request.headers.get("If-None-Match"), tag))
+        return new Response(null, {
+          status: 304,
+          headers: { ...headers, ETag: tag },
+        });
+      const result =
+        path === "state"
+          ? await readState(c, requested)
+          : await memberDirectory(cid, { id: c.viewer_id });
+      return json(result, 200, { ETag: tag });
+    }
     const user = await viewer(request);
     if (request.method === "GET" && path === "communities") {
       if (!user) throw new ApiError(401, "请先加入一个社群");
@@ -50,149 +72,21 @@ async function handle(request: Request) {
         ),
       });
     }
-    if (request.method === "GET" && path === "members") {
-      const cid = url.searchParams.get("community") || "unnc";
-      return json(await memberDirectory(cid, user));
-    }
-    if (request.method === "GET" && path === "state") {
-      const cid = url.searchParams.get("community") || "unnc";
-      const c = await community(cid);
-      const m = await membership(cid, user?.id);
-      const isModerator = ["owner", "admin"].includes(m?.role);
-      const review =
-        user && !m
-          ? await one(
-              "SELECT status FROM membership_requests WHERE community_id=? AND user_id=?",
-              cid,
-              user.id,
-            )
-          : null;
-      const canRead = c.visibility === "public" || !!m;
-      const count = await one(
-        "SELECT COUNT(*) AS n FROM memberships WHERE community_id=?",
-        cid,
-      );
-      const state: Record<string, any> = {
-        community: {
-          ...c,
-          joinApproval: !!c.join_approval,
-          memberCount: canRead ? count?.n : 0,
-        },
-        pendingCount: isModerator
-          ? ((
-              await one(
-                "SELECT COUNT(*) AS n FROM membership_requests WHERE community_id=? AND status='pending'",
-                cid,
-              )
-            )?.n ?? 0)
-          : 0,
-        viewer: user
-          ? {
-              id: user.id,
-              nickname: user.nickname,
-              role: m?.role ?? null,
-              joinStatus: review?.status ?? null,
-              platformAdmin: !!user.platform_admin,
-              username:
-                (
-                  await one(
-                    "SELECT username FROM account_credentials WHERE user_id=?",
-                    user.id,
-                  )
-                )?.username ?? null,
-            }
-          : null,
-        accessible: canRead,
-        topics: [],
-        topic: null,
-        comments: [],
-        voters: [],
-        stats: { pro: 0, con: 0 },
-        mySide: null,
-        myVoteAnonymous: false,
-      };
-      if (canRead) {
-        const rows = await all(
-          "SELECT t.*, (SELECT COUNT(*) FROM votes v WHERE v.topic_id=t.id) AS voteCount, (SELECT COUNT(*) FROM comments c WHERE c.topic_id=t.id AND c.deleted=0) AS commentCount FROM topics t WHERE community_id=? AND (t.withdrawn=0 OR ?=1) ORDER BY t.withdrawn,created_at DESC,id DESC",
-          cid,
-          isModerator ? 1 : 0,
-        );
-        state.topics = rows.map((t) => ({
-          id: t.id,
-          title: t.title,
-          description: t.description,
-          proLabel: t.pro_label,
-          conLabel: t.con_label,
-          category: t.category,
-          status: t.status,
-          withdrawn: !!t.withdrawn,
-          updatedAt: t.updated_at,
-          createdAt: t.created_at,
-          voteCount: t.voteCount,
-          commentCount: t.commentCount,
-        }));
-        const requested = url.searchParams.get("topic");
-        state.topic = requested
-          ? (state.topics.find((t: any) => t.id === requested) ?? null)
-          : (state.topics[0] ?? null);
-        if (state.topic) {
-          const tid = state.topic.id;
-          const counts = await all(
-            "SELECT side,COUNT(*) AS n FROM votes WHERE topic_id=? GROUP BY side",
-            tid,
-          );
-          for (const count of counts) state.stats[count.side] = count.n;
-          if (m)
-            state.voters = (
-              await all(
-                "SELECT v.user_id,u.nickname,v.side,v.anonymous FROM votes v JOIN users u ON u.id=v.user_id WHERE v.topic_id=? ORDER BY v.anonymous,v.side,CASE WHEN v.anonymous=0 THEN u.nickname ELSE '' END,CASE WHEN v.anonymous=0 THEN u.id ELSE '' END",
-                tid,
-              )
-            ).map((v) => ({
-              userId: v.anonymous ? null : v.user_id,
-              nickname: v.anonymous ? "匿名成员" : v.nickname,
-              side: v.side,
-              anonymous: !!v.anonymous,
-              isMine: v.user_id === user?.id,
-            }));
-          const myVote = user
-            ? await one(
-                "SELECT side,anonymous FROM votes WHERE topic_id=? AND user_id=?",
-                tid,
-                user.id,
-              )
-            : null;
-          state.mySide = myVote?.side ?? null;
-          state.myVoteAnonymous = !!myVote?.anonymous;
-          state.comments = (
-            await all(
-              "SELECT c.*,u.nickname FROM comments c JOIN users u ON c.user_id=u.id WHERE topic_id=? ORDER BY created_at ASC,id ASC",
-              tid,
-            )
-          ).map((c) => ({
-            id: c.id,
-            parentId: c.parent_id,
-            userId: c.anonymous ? null : c.user_id,
-            nickname: c.anonymous ? "匿名辩友" : c.nickname,
-            anonymous: !!c.anonymous,
-            isMine: c.user_id === user?.id,
-            side: c.side,
-            content: c.deleted ? "此观点已被移除" : c.content,
-            deleted: c.deleted,
-            createdAt: c.created_at,
-          }));
-        }
-      }
-      return json(state);
-    }
     if (request.method !== "POST") throw new ApiError(404, "接口不存在");
     const b = await body(request);
     const cid = text(b.communityId ?? "unnc", "社区标识", 1, 50);
     const ip = request.headers.get("cf-connecting-ip") || "local";
-    await limit(`request:${ip}`, 180);
+    await limit(
+      user ? `request-user:${user.id}` : `request-ip:${ip}`,
+      user ? 180 : 600,
+    );
+    const complete = async (data: unknown, status = 200, extra = {}) => {
+      await publishChange(cid);
+      return json(data, status, extra);
+    };
     if (path.startsWith("auth/")) {
       const result = await accountAction(path, b, request, user, ip, cid);
-      return json(
+      return complete(
         result.data,
         result.status ?? 200,
         result.cookie ? { "Set-Cookie": result.cookie } : {},
@@ -238,7 +132,7 @@ async function handle(request: Request) {
           )
           .bind(cid, uid, "owner", Date.now()),
       ]);
-      return json(
+      return complete(
         {
           ok: true,
           hasAccount: !!(await one(
@@ -253,7 +147,10 @@ async function handle(request: Request) {
       );
     }
     if (path === "join") {
-      await limit(`join:${ip}`, 10);
+      await limit(
+        user ? `join-user:${user.id}` : `join:${ip}`,
+        user ? 30 : 300,
+      );
       const nickname = text(b.nickname, "昵称", 2, 20);
       const uid = user?.id ?? id();
       const plan = await prepareCommunityJoin(cid, uid, b.invite);
@@ -268,7 +165,7 @@ async function handle(request: Request) {
         );
       statements.push(...membershipJoinStatements(plan));
       await database().batch(statements);
-      return json(
+      return complete(
         { ok: true, ...(await membershipState(cid, uid)) },
         200,
         user ? {} : { "Set-Cookie": await session(uid, request) },
@@ -280,7 +177,7 @@ async function handle(request: Request) {
         ?.match(/(?:^|;\s*)debate_session=([^;]+)/)?.[1];
       if (token)
         await run("DELETE FROM sessions WHERE token_hash=?", await hash(token));
-      return json({ ok: true }, 200, {
+      return complete({ ok: true }, 200, {
         "Set-Cookie":
           "debate_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
       });
@@ -316,7 +213,7 @@ async function handle(request: Request) {
           )
           .bind(slug, user.id, "owner", Date.now()),
       ]);
-      return json({ slug }, 201);
+      return complete({ slug }, 201);
     }
     if (["topics/status", "votes", "comments"].includes(path))
       b.topicId = text(b.topicId, "辩题标识", 1, 80);
@@ -383,7 +280,7 @@ async function handle(request: Request) {
         expiresAt,
         Date.now(),
       );
-      return json({ token, expiresAt }, 201);
+      return complete({ token, expiresAt }, 201);
     } else if (path === "invites/revoke") {
       await run("UPDATE invites SET revoked=1 WHERE community_id=?", cid);
     } else if (path === "topics/create") {
@@ -400,7 +297,7 @@ async function handle(request: Request) {
         "open",
         Date.now(),
       );
-      return json({ id: tid }, 201);
+      return complete({ id: tid }, 201);
     } else if (path === "topics/status") {
       await requireTopic(b.topicId, cid);
       if (!["open", "closed"].includes(b.status))
@@ -490,8 +387,12 @@ async function handle(request: Request) {
         b.commentId,
       );
     } else throw new ApiError(404, "接口不存在");
-    return json({ ok: true });
+    return complete({ ok: true });
   } catch (e) {
+    if (e instanceof PasswordCapacityError)
+      return json({ error: "同时登录的人较多，请稍等几秒再试" }, 503, {
+        "Retry-After": "3",
+      });
     if (e instanceof ApiError) return json({ error: e.message }, e.status);
     console.error("DebateHub API error", e);
     return json({ error: "服务暂时不可用，请稍后重试" }, 500);

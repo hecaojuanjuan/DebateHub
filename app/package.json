@@ -21,9 +21,12 @@
     "test:accounts": "node scripts/test-accounts.mjs",
     "test:passwords": "node scripts/test-passwords.mjs",
     "owner:setup": "node scripts/prepare-owner-account.mjs",
-    "format:check": "prettier --check components/debate-app.tsx components/community-modals.tsx components/member-manager.tsx app lib/server.ts lib/types.ts lib/accounts.ts lib/passwords.ts lib/usernames.ts lib/membership-management.ts lib/topic-management.ts db/schema.ts scripts/test-api.mjs scripts/test-accounts.mjs scripts/test-passwords.mjs scripts/test-usernames.mjs scripts/test-management.mjs scripts/migrate-local.mjs scripts/start-local.mjs scripts/deploy-cloudflare.mjs scripts/deploy-pages-entry.mjs scripts/prepare-owner-account.mjs",
+    "format:check": "prettier --check components/debate-app.tsx components/community-modals.tsx components/member-manager.tsx app lib/server.ts lib/types.ts lib/accounts.ts lib/passwords.ts lib/usernames.ts lib/membership-management.ts lib/topic-management.ts db/schema.ts scripts/test-api.mjs scripts/test-accounts.mjs scripts/test-passwords.mjs scripts/test-usernames.mjs scripts/test-management.mjs scripts/migrate-local.mjs scripts/start-local.mjs scripts/deploy-cloudflare.mjs scripts/deploy-pages-entry.mjs scripts/prepare-owner-account.mjs lib/state.ts lib/realtime.ts components/use-community-sync.ts scripts/test-capacity.mjs scripts/start-benchmark.mjs lib/http-cache.ts scripts/test-cache.mjs",
     "test:usernames": "node scripts/test-usernames.mjs",
-    "test:management": "node scripts/test-management.mjs"
+    "test:management": "node scripts/test-management.mjs",
+    "test:capacity": "node scripts/test-capacity.mjs",
+    "benchmark:start": "node scripts/start-benchmark.mjs",
+    "test:cache": "node scripts/test-cache.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

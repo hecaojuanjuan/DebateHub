@@ -17,6 +17,12 @@ const managedLinux = readExecutionProfile() === "managed-linux";
 const localBindingConfig = {
   main: "./build/sites-worker.ts",
   compatibility_flags: ["nodejs_compat"],
+  durable_objects: {
+    bindings: [{ name: "COMMUNITY_HUB", class_name: "CommunityHub" }],
+  },
+  migrations: [
+    { tag: "v1-community-hub", new_sqlite_classes: ["CommunityHub"] },
+  ],
   d1_databases: d1
     ? [
         {

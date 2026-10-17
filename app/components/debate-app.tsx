@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowRight,
@@ -37,6 +37,7 @@ import type {
   CommunityLink,
 } from "@/lib/types";
 import CommunityModals, { type ModalName } from "./community-modals";
+import { useCommunitySync } from "./use-community-sync";
 
 const sideName = (side: Side) => (side === "pro" ? "正方" : "反方");
 const formatTime = (value: number) =>
@@ -57,8 +58,6 @@ export default function DebateApp({
   const [selectedTopic, setSelectedTopic] = useState("");
   const [view, setView] = useState<"discussion" | "topics">("discussion");
   const [modal, setModal] = useState<ModalName>(null);
-  const [error, setError] = useState("");
-  const [online, setOnline] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [invite, setInvite] = useState("");
@@ -75,46 +74,18 @@ export default function DebateApp({
   const [members, setMembers] = useState<Member[] | null>(null);
   const [requests, setRequests] = useState<JoinRequest[] | null>(null);
   const [communities, setCommunities] = useState<CommunityLink[] | null>(null);
-  const seq = useRef(0);
   const mutationLock = useRef(false);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const refresh = useCallback(async () => {
-    const current = ++seq.current;
-    try {
-      const response = await fetch(
-        `/api/state?community=${encodeURIComponent(communityId)}${selectedTopic ? `&topic=${encodeURIComponent(selectedTopic)}` : ""}`,
-        { cache: "no-store" },
-      );
-      const value = (await response.json()) as State & { error?: string };
-      if (!response.ok) throw new Error(value.error);
-      if (seq.current === current) {
-        setData(value);
-        setOnline(true);
-        setError("");
-      }
-    } catch (e) {
-      if (seq.current === current) {
-        setOnline(false);
-        setError(e instanceof Error ? e.message : "连接失败，请重试");
-      }
-    }
-  }, [communityId, selectedTopic]);
+  const { refresh, online, error } = useCommunitySync(
+    communityId,
+    selectedTopic,
+    data?.viewer?.id ?? "",
+    !!data?.accessible,
+    setData,
+  );
   useEffect(() => {
     setAnonymousVote(data?.mySide ? data.myVoteAnonymous : false);
   }, [data?.topic?.id, data?.mySide, data?.myVoteAnonymous]);
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, 2000);
-    const focus = () => void refresh();
-    window.addEventListener("focus", focus);
-    return () => {
-      clearInterval(timer);
-      ++seq.current;
-      window.removeEventListener("focus", focus);
-    };
-  }, [refresh]);
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const setup = fragment.get("setup");
@@ -135,32 +106,51 @@ export default function DebateApp({
     const timer = setTimeout(() => setToast(""), 4500);
     return () => clearTimeout(timer);
   }, [toast]);
+  const roster = useRef<{ tag: string; running: Promise<void> | null }>({
+    tag: "",
+    running: null,
+  });
   const loadMembers = useCallback(async () => {
-    const response = await fetch(
-      `/api/members?community=${encodeURIComponent(communityId)}`,
-      { cache: "no-store" },
-    );
-    const result = (await response.json()) as {
-      members: Member[];
-      requests: JoinRequest[];
-      error?: string;
-    };
-    if (!response.ok) {
-      setMembers(null);
-      setRequests(null);
-      throw new Error(result.error);
-    }
-    setMembers(result.members);
-    setRequests(result.requests);
+    const cache = roster.current;
+    if (cache.running) return cache.running;
+    cache.running = (async () => {
+      const response = await fetch(
+        `/api/members?community=${encodeURIComponent(communityId)}`,
+        {
+          cache: "no-store",
+          signal: AbortSignal.timeout(15_000),
+          headers: cache.tag ? { "If-None-Match": cache.tag } : {},
+        },
+      );
+      if (response.status === 304) return;
+      const result = (await response.json()) as {
+        members: Member[];
+        requests: JoinRequest[];
+        error?: string;
+      };
+      if (!response.ok) {
+        cache.tag = "";
+        setMembers(null);
+        setRequests(null);
+        throw new Error(result.error);
+      }
+      cache.tag = response.headers.get("ETag") || "";
+      setMembers(result.members);
+      setRequests(result.requests);
+    })().finally(() => {
+      cache.running = null;
+    });
+    return cache.running;
   }, [communityId]);
   useEffect(() => {
     if (modal === "members") {
+      roster.current.tag = "";
       setMembers(null);
       void loadMembers().catch((e) => setToast(e.message));
       const timer = setInterval(() => {
         if (!document.hidden)
           void loadMembers().catch((e) => setToast(e.message));
-      }, 2500);
+      }, 15000);
       return () => clearInterval(timer);
     }
     if (modal === "switch") {
@@ -177,6 +167,10 @@ export default function DebateApp({
         .catch((e) => setToast(e.message));
     }
   }, [modal, loadMembers]);
+  useEffect(() => {
+    if (modal === "members")
+      void loadMembers().catch((e) => setToast(e.message));
+  }, [data, modal, loadMembers]);
   function perform(
     path: string,
     body: Record<string, unknown>,
@@ -315,16 +309,29 @@ export default function DebateApp({
       </div>
     </article>
   );
-  let roots = data?.comments.filter((c) => !c.parentId) ?? [];
-  if (filter !== "all")
-    roots = roots.filter(
+  const threads = useMemo(() => {
+    const roots: Comment[] = [];
+    const replies = new Map<string, Comment[]>();
+    for (const comment of data?.comments ?? []) {
+      if (!comment.parentId) roots.push(comment);
+      else {
+        const list = replies.get(comment.parentId) ?? [];
+        list.push(comment);
+        replies.set(comment.parentId, list);
+      }
+    }
+    const visible = roots.filter(
       (c) =>
+        filter === "all" ||
         c.side === filter ||
-        data?.comments.some((r) => r.parentId === c.id && r.side === filter),
+        replies.get(c.id)?.some((r) => r.side === filter),
     );
-  roots = [...roots].sort((a, b) =>
-    sort === "newest" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt,
-  );
+    visible.sort((a, b) =>
+      sort === "newest" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt,
+    );
+    return { roots: visible, replies };
+  }, [data?.comments, filter, sort]);
+  const roots = threads.roots;
 
   return (
     <div className="app-shell">
@@ -938,13 +945,12 @@ export default function DebateApp({
                           roots.map((c) => (
                             <div className="thread" key={c.id}>
                               {renderComment(c)}
-                              {data.comments
+                              {(threads.replies.get(c.id) ?? [])
                                 .filter(
                                   (r) =>
-                                    r.parentId === c.id &&
-                                    (filter === "all" ||
-                                      r.side === filter ||
-                                      c.side === filter),
+                                    filter === "all" ||
+                                    r.side === filter ||
+                                    c.side === filter,
                                 )
                                 .map((r) => renderComment(r, true))}
                             </div>
@@ -1012,7 +1018,7 @@ export default function DebateApp({
                       <div className="stats-note">
                         <Radio size={14} />
                         {total
-                          ? `共 ${total} 人参与持方 · 约每 2 秒同步`
+                          ? `共 ${total} 人参与持方 · 新动态自动同步`
                           : "暂无持方，成为第一个表达立场的人"}
                       </div>
                       {joined ? (
