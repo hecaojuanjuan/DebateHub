@@ -1,5 +1,8 @@
 "use client";
 
+import { useLanguage, LanguageSwitcher } from "./language-provider";
+import { LocalizedForm } from "./localized-form";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
@@ -39,27 +42,32 @@ import type {
 import CommunityModals, { type ModalName } from "./community-modals";
 import { useCommunitySync } from "./use-community-sync";
 
-const sideName = (side: Side) => (side === "pro" ? "正方" : "反方");
-const formatTime = (value: number) =>
-  new Intl.DateTimeFormat("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "Asia/Shanghai",
-  }).format(value);
-
 export default function DebateApp({
   communityId = "unnc",
 }: {
   communityId?: string;
 }) {
   const [data, setData] = useState<State | null>(null);
+  const {
+    t,
+    locale,
+    errorText,
+    formatTime,
+    formatDate,
+    communityName,
+    communityDescription,
+  } = useLanguage();
+  const displayName = communityName(data?.community.name, communityId);
+  const sideName = (side: Side) => t(side === "pro" ? "Pro" : "Con");
+  useEffect(() => {
+    document.title = `DebateHub · ${displayName}`;
+  }, [displayName]);
   const [selectedTopic, setSelectedTopic] = useState("");
   const [view, setView] = useState<"discussion" | "topics">("discussion");
   const [modal, setModal] = useState<ModalName>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+  useEffect(() => setToast(""), [locale]);
   const [invite, setInvite] = useState("");
   const [setupToken, setSetupToken] = useState("");
   const [inviteUrl, setInviteUrl] = useState("");
@@ -92,7 +100,7 @@ export default function DebateApp({
     if (setup) {
       setSetupToken(setup);
       setModal("account");
-      history.replaceState(null, "", location.pathname);
+      history.replaceState(null, "", location.pathname + location.search);
       return;
     }
     const token = fragment.get("invite");
@@ -187,7 +195,10 @@ export default function DebateApp({
           body: JSON.stringify({ ...body, communityId }),
         });
         const result = (await response.json()) as Record<string, any>;
-        if (!response.ok) throw new Error(result.error || "操作失败，请重试");
+        if (!response.ok)
+          throw new Error(
+            result.error || t("Something went wrong. Please try again."),
+          );
         done?.(result);
         if (
           path === "join" ||
@@ -200,7 +211,11 @@ export default function DebateApp({
           await loadMembers();
         await refresh();
       } catch (e) {
-        setToast(e instanceof Error ? e.message : "操作失败，请重试");
+        setToast(
+          e instanceof Error
+            ? e.message
+            : t("Something went wrong. Please try again."),
+        );
       } finally {
         mutationLock.current = false;
         setBusy(false);
@@ -241,7 +256,12 @@ export default function DebateApp({
       "votes",
       { topicId: topic?.id, side, anonymous: anonymousVote },
       () =>
-        setToast(`已${anonymousVote ? "匿名" : "按昵称"}选择${sideName(side)}`),
+        setToast(
+          t("Voted {side} ({privacy}).", {
+            side: sideName(side),
+            privacy: anonymousVote ? t("anonymously") : t("with your nickname"),
+          }),
+        ),
     );
   };
   const changeVotePrivacy = (checked: boolean) => {
@@ -258,7 +278,11 @@ export default function DebateApp({
       { topicId: topic?.id, side: data.mySide, anonymous: checked },
       () => {
         setAnonymousVote(checked);
-        setToast(checked ? "持方已改为匿名展示" : "持方已改为按昵称展示");
+        setToast(
+          checked
+            ? t("Your vote is now anonymous.")
+            : t("Your vote now shows your nickname."),
+        );
       },
     );
   };
@@ -273,15 +297,25 @@ export default function DebateApp({
   };
   const renderComment = (c: Comment, nested = false) => (
     <article className={`comment ${nested ? "nested" : ""}`} key={c.id}>
-      <div className={`avatar ${c.side}`}>{c.nickname.slice(0, 1)}</div>
+      <div className={`avatar ${c.side}`}>
+        {c.anonymous
+          ? t("Anonymous contributor").slice(0, 1)
+          : c.nickname.slice(0, 1)}
+      </div>
       <div className="comment-main">
         <div className="comment-byline">
-          <strong>{c.nickname}</strong>
-          {c.isMine && <span className="mine-label">你</span>}
+          <strong>
+            {c.anonymous ? t("Anonymous contributor") : c.nickname}
+          </strong>
+          {c.isMine && <span className="mine-label">{t("You")}</span>}
           <span className={`side-label ${c.side}`}>{sideName(c.side)}</span>
-          <time>{formatTime(c.createdAt)}</time>
+          <time title={t("Times are shown in Beijing time (UTC+8)")}>
+            {formatTime(c.createdAt)}
+          </time>
         </div>
-        <p className={c.deleted ? "deleted" : ""}>{c.content}</p>
+        <p className={c.deleted ? "deleted" : ""}>
+          {c.deleted ? t("This post has been removed.") : c.content}
+        </p>
         {!c.deleted && (
           <div className="comment-actions">
             <button
@@ -296,12 +330,12 @@ export default function DebateApp({
               disabled={topic?.withdrawn || topic?.status === "closed"}
             >
               <MessageCircle size={14} />
-              回复
+              {t("Reply")}
             </button>
             {(isAdmin || c.isMine) && (
               <button onClick={() => setDeleteTarget(c.id)}>
                 <Trash2 size={13} />
-                移除
+                {t("Remove")}
               </button>
             )}
           </div>
@@ -334,7 +368,7 @@ export default function DebateApp({
   const roots = threads.roots;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" lang={locale === "en" ? "en-US" : "zh-CN"}>
       <aside className="sidebar">
         <a className="brand" href={`/c/${communityId}`}>
           <span className="brand-icon">
@@ -348,9 +382,9 @@ export default function DebateApp({
           className="community-switch"
           onClick={() => setModal(data?.viewer ? "switch" : "join")}
         >
-          <span className="community-logo">辩</span>
+          <span className="community-logo">{t("D")}</span>
           <span>
-            <strong>{data?.community.name || "宁诺例辩"}</strong>
+            <strong>{displayName}</strong>
             <small>
               {communityId === "unnc"
                 ? "NINGBO NOTTINGHAM"
@@ -359,13 +393,13 @@ export default function DebateApp({
           </span>
           <ChevronDown size={15} />
         </button>
-        <nav aria-label="主导航">
+        <nav aria-label={t("Main navigation")}>
           <button
             className={view === "discussion" ? "nav-item active" : "nav-item"}
             onClick={() => setView("discussion")}
           >
             <LayoutGrid size={19} />
-            社区广场
+            {t("Community")}
             <ChevronRight size={15} />
           </button>
           <button
@@ -373,14 +407,14 @@ export default function DebateApp({
             onClick={() => setView("topics")}
           >
             <BookOpen size={19} />
-            全部辩题
+            {t("All motions")}
             {data?.accessible && (
               <span className="nav-count">{data.topics.length}</span>
             )}
           </button>
           <button className="nav-item" onClick={() => setModal("guide")}>
             <CircleHelp size={19} />
-            参与指南
+            {t("How it works")}
             <ArrowUpRight size={15} />
           </button>
         </nav>
@@ -389,18 +423,18 @@ export default function DebateApp({
         <div className="sidebar-note">
           <span className="tiny-quote">“</span>
           <p>
-            辩论的意义，
+            {t("Debate helps us")}
             <br />
-            是看见另一种可能。
+            {t("see other possibilities.")}
           </p>
           <small>BE OPEN. BE CURIOUS.</small>
         </div>
         <div className="sidebar-bottom">
           <span className={`live-dot ${online ? "" : "offline"}`} />
-          <span>{online ? "社区已连接" : "正在连接社区"}</span>
+          <span>{online ? t("Connected") : t("Connecting…")}</span>
           <button
             className="icon-button"
-            aria-label="社区设置"
+            aria-label={t("Community settings")}
             onClick={() =>
               setModal(isAdmin ? "settings" : joined ? "switch" : "login")
             }
@@ -412,18 +446,24 @@ export default function DebateApp({
       <div className="main-shell">
         <header className="topbar">
           <div className="breadcrumb">
-            <span>{data?.community.name || "宁诺例辩"}</span>
+            <span>{displayName}</span>
             <ChevronRight size={14} />
-            <strong>{view === "topics" ? "全部辩题" : "社区广场"}</strong>
+            <strong>
+              {view === "topics" ? t("All motions") : t("Community")}
+            </strong>
           </div>
           <div className="topbar-actions">
-            <span className="header-caption">让观点相遇，让思考发生</span>
+            <LanguageSwitcher />
+            <span className="header-caption">
+              {t("Different views. Shared curiosity.")}
+            </span>
             {isAdmin && (
               <button
                 className="button small outline"
                 onClick={() => setModal("members")}
               >
-                成员管理{data?.pendingCount ? `（${data.pendingCount}）` : ""}
+                {t("Manage members")}
+                {data?.pendingCount ? `（${data.pendingCount}）` : ""}
               </button>
             )}
             {data?.viewer ? (
@@ -431,27 +471,33 @@ export default function DebateApp({
                 <button
                   className="user-chip"
                   onClick={() => setModal("switch")}
-                  aria-label="切换社群"
+                  aria-label={t("Switch community")}
                 >
                   <span className="mini-avatar">
                     {data?.viewer?.nickname.slice(0, 1)}
                   </span>
-                  {data?.viewer?.nickname}
+                  <span className="user-nickname">
+                    {data?.viewer?.nickname}
+                  </span>
                   {isAdmin && (
                     <small>
-                      {data?.viewer?.role === "owner" ? "群主" : "管理员"}
+                      {data?.viewer?.role === "owner" ? t("Owner") : t("Admin")}
                     </small>
                   )}
                 </button>
                 <button
                   className="icon-button"
-                  aria-label="退出登录"
+                  aria-label={t("Sign out")}
                   onClick={() =>
                     perform("logout", {}, () =>
                       setToast(
                         data?.viewer?.username
-                          ? "已退出，可使用用户名和密码重新登录"
-                          : "已退出，昵称参与需重新通过邀请加入",
+                          ? t(
+                              "Signed out. Sign back in with your username and password.",
+                            )
+                          : t(
+                              "Signed out. Use an invitation to join again with a nickname.",
+                            ),
                       ),
                     )
                   }
@@ -464,7 +510,7 @@ export default function DebateApp({
                 className="button small dark"
                 onClick={() => setModal(invite ? "join" : "login")}
               >
-                登录 / 注册
+                {t("Sign in / Join")}
                 <ArrowUpRight size={15} />
               </button>
             )}
@@ -477,18 +523,23 @@ export default function DebateApp({
                 <span /> A SPACE FOR DIFFERENT PERSPECTIVES
               </span>
               <h1>
-                每一种立场，
+                {t("Every perspective")}
                 <br />
-                都值得被<span>认真听见。</span>
+                {t("deserves to be ")}
+                <span>{t("heard.")}</span>
               </h1>
-              <p>从一个问题出发，在观点交锋中，遇见更开阔的自己。</p>
+              <p>
+                {t(
+                  "Start with a question. Exchange ideas. Discover new ways to think.",
+                )}
+              </p>
               <div className="welcome-tags">
                 <span>
                   <Users size={14} />
-                  {data?.community.name || "宁诺辩论社区"}
+                  {displayName}
                 </span>
                 <i />
-                每周辩题 · 自由表达 · 理性讨论
+                {t("Weekly motions · Open expression · Thoughtful discussion")}
               </div>
             </div>
             <div className="debate-art" aria-hidden="true">
@@ -498,7 +549,7 @@ export default function DebateApp({
               <span className="art-spark two">+</span>
               <div className="art-card art-pro">
                 <span>01 / PERSPECTIVE</span>
-                <strong>正。</strong>
+                <strong>{t("Pro.")}</strong>
                 <div>
                   <i />
                   <i />
@@ -508,7 +559,7 @@ export default function DebateApp({
               </div>
               <div className="art-card art-con">
                 <span>02 / PERSPECTIVE</span>
-                <strong>反。</strong>
+                <strong>{t("Con.")}</strong>
                 <div>
                   <i />
                   <i />
@@ -524,11 +575,19 @@ export default function DebateApp({
           {!data ? (
             <div className="loading-card">
               <Radio className="spin" size={26} />
-              <h2>{error ? "暂时无法连接社区" : "正在打开社区…"}</h2>
-              <p>{error || "让思考相遇，只需片刻。"}</p>
+              <h2>
+                {error
+                  ? t("Unable to connect right now")
+                  : t("Opening your community…")}
+              </h2>
+              <p>
+                {error
+                  ? errorText(error)
+                  : t("Your next conversation is just a moment away.")}
+              </p>
               {error && (
                 <button className="button dark" onClick={() => void refresh()}>
-                  重新连接
+                  {t("Reconnect")}
                 </button>
               )}
             </div>
@@ -540,22 +599,36 @@ export default function DebateApp({
               <span className="eyebrow">A COMMUNITY, BY INVITATION</span>
               <h2>
                 {data.viewer?.joinStatus === "pending"
-                  ? "申请已提交，等待审核。"
-                  : "好的讨论，从这里开始。"}
+                  ? t("Your request is awaiting approval.")
+                  : t("Good discussions start here.")}
               </h2>
-              <p>{data.community.description}</p>
+              <p>
+                {communityDescription(data.community.description, communityId)}
+              </p>
               <div className="private-pill">
                 <ShieldCheck size={14} />
-                这是一个私密社区 · 仅受邀成员可见
+                {t("Private community · Members only")}
               </div>
               {data.viewer?.joinStatus === "pending" && (
-                <p>群主或管理员同意后，这里会自动显示社区内容。</p>
+                <p>
+                  {t(
+                    "The community will appear here automatically once an owner or admin approves your request.",
+                  )}
+                </p>
               )}
               {data.viewer?.joinStatus === "rejected" && (
-                <p>上次入群申请未通过，可联系管理员或使用有效邀请重新申请。</p>
+                <p>
+                  {t(
+                    "Your last request was declined. Contact an admin or apply again with a valid invitation.",
+                  )}
+                </p>
               )}
               {data.viewer?.joinStatus === "removed" && (
-                <p>你已被移出此社群，使用有效邀请重新申请后需管理员同意。</p>
+                <p>
+                  {t(
+                    "You have been removed. A valid invitation and admin approval are needed to rejoin.",
+                  )}
+                </p>
               )}
               <button
                 className="button dark"
@@ -563,23 +636,26 @@ export default function DebateApp({
                 onClick={() => setModal("join")}
               >
                 {data.viewer?.joinStatus === "pending"
-                  ? "等待审核中"
+                  ? t("Awaiting approval")
                   : invite
                     ? data.community.joinApproval
-                      ? "接受邀请，申请加入"
-                      : "接受邀请，加入讨论"
-                    : "使用邀请加入"}
+                      ? t("Accept invitation and request to join")
+                      : t("Accept invitation and join")
+                    : t("Join with an invitation")}
                 <ArrowRight size={17} />
               </button>
               <button className="text-button" onClick={() => setModal("login")}>
-                已有账号，登录 <ArrowUpRight size={14} />
+                {t("Already a member? Sign in")}
+                <ArrowUpRight size={14} />
               </button>
             </section>
           ) : (
             <>
               {data.viewer?.joinStatus === "pending" && (
                 <p className="membership-banner">
-                  入群申请正在审核，通过后即可投票和发言。
+                  {t(
+                    "Your request is being reviewed. Once approved, you can vote and post.",
+                  )}
                 </p>
               )}
               <div className="section-heading">
@@ -587,8 +663,8 @@ export default function DebateApp({
                   <span className="orange-dash" />
                   <h2>
                     {view === "topics"
-                      ? "所有值得讨论的问题"
-                      : "本周，聊点不一样的"}
+                      ? t("Questions worth discussing")
+                      : t("A new perspective this week")}
                   </h2>
                   {view === "discussion" && (
                     <span className="subtle-tag">WEEKLY DEBATE</span>
@@ -600,7 +676,7 @@ export default function DebateApp({
                     onClick={() => setModal("publish")}
                   >
                     <Plus size={16} />
-                    发布辩题
+                    {t("New motion")}
                   </button>
                 )}
               </div>
@@ -611,33 +687,36 @@ export default function DebateApp({
                     <input
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      placeholder="搜索辩题或分类"
+                      placeholder={t("Search motions or categories")}
                     />
                   </label>
                   {data.topics
                     .filter((t) => `${t.title}${t.category}`.includes(search))
-                    .map((t, i) => (
+                    .map((motion, i) => (
                       <button
                         className="library-topic"
-                        key={t.id}
-                        onClick={() => changeTopic(t.id)}
+                        key={motion.id}
+                        onClick={() => changeTopic(motion.id)}
                       >
                         <span className="topic-number">
                           {String(data.topics.length - i).padStart(2, "0")}
                         </span>
                         <div>
                           <span className="category">
-                            {t.category} ·{" "}
-                            {t.withdrawn
-                              ? "已撤回"
-                              : t.status === "open"
-                                ? "讨论中"
-                                : "已结束"}
+                            {motion.category} ·{" "}
+                            {motion.withdrawn
+                              ? t("Withdrawn")
+                              : motion.status === "open"
+                                ? t("Open")
+                                : t("Closed")}
                           </span>
-                          <h3>{t.title}</h3>
+                          <h3>{motion.title}</h3>
                           <span className="muted">
-                            {t.voteCount} 人持方 · {t.commentCount} 条讨论 ·{" "}
-                            {formatTime(t.createdAt)}
+                            {t("Votes: {votes} · Posts: {posts}", {
+                              votes: motion.voteCount,
+                              posts: motion.commentCount,
+                            })}{" "}
+                            · {formatTime(motion.createdAt)}
                           </span>
                         </div>
                         <ArrowUpRight size={24} />
@@ -648,19 +727,25 @@ export default function DebateApp({
                   ).length && (
                     <div className="empty">
                       <Search size={25} />
-                      <h3>还没有找到相关辩题</h3>
-                      <p>换个关键词，或发起一个新问题。</p>
+                      <h3>{t("No matching motions yet")}</h3>
+                      <p>
+                        {t("Try another keyword, or start a new discussion.")}
+                      </p>
                     </div>
                   )}
                 </section>
               ) : !topic ? (
                 <div className="empty panel">
                   <BookOpen size={30} />
-                  <h2>下一个好问题，等你发起。</h2>
+                  <h2>{t("The next good question starts with you.")}</h2>
                   <p>
                     {isAdmin
-                      ? "点击“发布辩题”，开启社区的第一次讨论。"
-                      : "管理员正在准备新的辩题，稍后回来看看。"}
+                      ? t(
+                          "Choose “New motion” to start your community’s first discussion.",
+                        )
+                      : t(
+                          "An admin is preparing a new motion. Check back soon.",
+                        )}
                   </p>
                 </div>
               ) : (
@@ -677,10 +762,10 @@ export default function DebateApp({
                         >
                           <span />
                           {topic.withdrawn
-                            ? "已撤回 · 管理员可见"
+                            ? t("Withdrawn · Admins only")
                             : topic.status === "open"
-                              ? "正在讨论"
-                              : "讨论已结束"}
+                              ? t("Discussion open")
+                              : t("Discussion closed")}
                         </span>
                       </div>
                       <span className="motion-overline">
@@ -690,7 +775,9 @@ export default function DebateApp({
                       <p className="motion-description">{topic.description}</p>
                       {topic.withdrawn && (
                         <p className="membership-banner">
-                          这道辩题已对成员隐藏。已有讨论与投票保留，恢复后成员可再次查看。
+                          {t(
+                            "This motion is hidden from members. Posts and votes are preserved and will reappear when it is restored.",
+                          )}
                         </p>
                       )}
                       {isAdmin && (
@@ -699,7 +786,7 @@ export default function DebateApp({
                             className="button small outline"
                             onClick={() => setModal("editTopic")}
                           >
-                            修改辩题
+                            {t("Edit motion")}
                           </button>
                           <button
                             className="button small outline"
@@ -709,36 +796,40 @@ export default function DebateApp({
                                 ? perform(
                                     "topics/withdraw",
                                     { topicId: topic.id, withdrawn: false },
-                                    () => setToast("辩题已恢复"),
+                                    () => setToast(t("Motion restored.")),
                                   )
                                 : setModal("withdrawTopic")
                             }
                           >
-                            {topic.withdrawn ? "恢复辩题" : "撤回辩题"}
+                            {topic.withdrawn
+                              ? t("Restore motion")
+                              : t("Withdraw motion")}
                           </button>
                         </div>
                       )}
                       <div className="motion-footer">
                         <span>
                           <Users size={15} />
-                          {total} 人已选择持方
+                          {t("Votes: {count}", { count: total })}
                         </span>
                         <span>
                           <MessageCircle size={15} />
-                          {commentCount} 条讨论
+                          {t("Posts: {count}", { count: commentCount })}
                         </span>
                         <span>
-                          发布于 {formatTime(topic.createdAt).split(" ")[0]}
+                          {t("Posted {date}", {
+                            date: formatDate(topic.createdAt),
+                          })}
                         </span>
                       </div>
                     </section>
                     <section className="stance-section">
                       <div className="mini-heading">
-                        <h3>你的立场，由你表达</h3>
+                        <h3>{t("Where do you stand?")}</h3>
                         <span>
                           {data.mySide
-                            ? "可以随时改变想法"
-                            : "选择持方，加入这场思想碰撞"}
+                            ? t("You can change your mind")
+                            : t("Choose a side and join the conversation")}
                         </span>
                       </div>
                       <div className="vote-privacy">
@@ -755,12 +846,16 @@ export default function DebateApp({
                               topic.status === "closed"
                             }
                           />
-                          匿名投票
+                          {t("Vote anonymously")}
                         </label>
                         <span>
                           {anonymousVote
-                            ? "持方列表显示「匿名成员」，投票仍计入比例"
-                            : "持方列表显示你的昵称；可勾选后再选择持方"}
+                            ? t(
+                                "Your vote is counted, but your name is hidden from the voter list.",
+                              )
+                            : t(
+                                "Your nickname appears in the voter list. Tick this first to vote anonymously.",
+                              )}
                         </span>
                       </div>
                       <div className="stance-grid">
@@ -793,9 +888,13 @@ export default function DebateApp({
                             </h4>
                             <span className="stance-bottom">
                               {data.mySide === side
-                                ? "我的立场"
-                                : `站${sideName(side)}`}
-                              <span>{data.stats[side]} 人</span>
+                                ? t("My side")
+                                : t("Choose {side}", { side: sideName(side) })}
+                              <span>
+                                {t("Voters: {count}", {
+                                  count: data.stats[side],
+                                })}
+                              </span>
                             </span>
                           </button>
                         ))}
@@ -804,16 +903,17 @@ export default function DebateApp({
                     <section className="discussion panel" id="discussion">
                       <div className="discussion-heading">
                         <h3>
-                          观点交锋<span>{commentCount}</span>
+                          {t("Discussion")}
+                          <span>{commentCount}</span>
                         </h3>
                         <label className="sort-label">
-                          <span className="sr-only">评论排序</span>
+                          <span className="sr-only">{t("Sort posts")}</span>
                           <select
                             value={sort}
                             onChange={(e) => setSort(e.target.value)}
                           >
-                            <option value="newest">最新发表</option>
-                            <option value="oldest">最早发表</option>
+                            <option value="newest">{t("Newest first")}</option>
+                            <option value="oldest">{t("Oldest first")}</option>
                           </select>
                           <ArrowDown size={13} />
                         </label>
@@ -821,7 +921,7 @@ export default function DebateApp({
                       <div
                         className="filter-tabs"
                         role="tablist"
-                        aria-label="按持方筛选"
+                        aria-label={t("Filter by side")}
                       >
                         {(["all", "pro", "con"] as const).map((f) => (
                           <button
@@ -831,14 +931,16 @@ export default function DebateApp({
                             key={f}
                             onClick={() => setFilter(f)}
                           >
-                            {f === "all" ? "全部观点" : `${sideName(f)}观点`}
+                            {f === "all"
+                              ? t("All views")
+                              : t("{side} views", { side: sideName(f) })}
                             {f !== "all" && (
                               <span className={`filter-dot ${f}`} />
                             )}
                           </button>
                         ))}
                       </div>
-                      <form
+                      <LocalizedForm
                         className="composer"
                         onSubmit={(e) => {
                           e.preventDefault();
@@ -847,7 +949,7 @@ export default function DebateApp({
                             return;
                           }
                           if (!data.mySide) {
-                            setToast("先在上方选择持方，再发表观点");
+                            setToast(t("Choose a side above before posting."));
                             return;
                           }
                           perform(
@@ -861,18 +963,27 @@ export default function DebateApp({
                             () => {
                               setDraft("");
                               setReply(null);
-                              setToast("观点已发布，让讨论继续");
+                              setToast(
+                                t("Posted. Keep the conversation going."),
+                              );
                             },
                           );
                         }}
                       >
                         {reply && (
                           <div className="reply-to">
-                            回复 {reply.nickname}：{reply.content.slice(0, 40)}
+                            {t("Replying to {name}: ", {
+                              name: reply.anonymous
+                                ? t("Anonymous contributor")
+                                : reply.nickname,
+                            })}
+                            {reply.deleted
+                              ? t("This post has been removed.")
+                              : reply.content.slice(0, 40)}
                             <button
                               type="button"
                               className="icon-button"
-                              aria-label="取消回复"
+                              aria-label={t("Cancel reply")}
                               onClick={() => setReply(null)}
                             >
                               <X size={14} />
@@ -881,7 +992,7 @@ export default function DebateApp({
                         )}
                         <textarea
                           ref={composer}
-                          aria-label="你的观点"
+                          aria-label={t("Your viewpoint")}
                           value={draft}
                           onChange={(e) => setDraft(e.target.value)}
                           maxLength={3000}
@@ -891,8 +1002,10 @@ export default function DebateApp({
                           }
                           placeholder={
                             topic.status === "closed"
-                              ? "本次讨论已结束，感谢每一个认真思考的你。"
-                              : "说说你的理由，让观点被看见…"
+                              ? t(
+                                  "This discussion is closed. Thank you for sharing your perspective.",
+                                )
+                              : t("Share your reasoning…")
                           }
                         />
                         <div className="composer-identity">
@@ -905,12 +1018,18 @@ export default function DebateApp({
                                 topic.withdrawn || topic.status === "closed"
                               }
                             />
-                            匿名发表
+                            {t("Post anonymously")}
                           </label>
                           <span>
                             {anonymous
-                              ? "本条发言显示为「匿名辩友」；投票匿名由上方单独设置"
-                              : `以「${data.viewer?.nickname || "社群昵称"}」发表观点`}
+                              ? t(
+                                  "This post hides your nickname. Vote anonymity is set separately above.",
+                                )
+                              : t("Posting as {name}", {
+                                  name:
+                                    data.viewer?.nickname ||
+                                    t("Community nickname"),
+                                })}
                           </span>
                         </div>
                         <div className="composer-bottom">
@@ -918,10 +1037,12 @@ export default function DebateApp({
                             {data.mySide ? (
                               <>
                                 <span className={`filter-dot ${data.mySide}`} />
-                                以{sideName(data.mySide)}身份发言
+                                {t("Posting on the {side} side", {
+                                  side: sideName(data.mySide),
+                                })}
                               </>
                             ) : (
-                              "先选择持方，再带着理由加入"
+                              t("Choose a side, then share your reasoning")
                             )}
                             <small>{draft.length}/3000</small>
                           </span>
@@ -935,11 +1056,11 @@ export default function DebateApp({
                             }
                             type="submit"
                           >
-                            {busy ? "发送中…" : "发布观点"}
+                            {busy ? t("Posting…") : t("Post viewpoint")}
                             <Send size={14} />
                           </button>
                         </div>
-                      </form>
+                      </LocalizedForm>
                       <div className="comment-list">
                         {roots.length ? (
                           roots.map((c) => (
@@ -960,10 +1081,14 @@ export default function DebateApp({
                             <MessageSquareQuote size={29} strokeWidth={1.4} />
                             <h4>
                               {filter === "all"
-                                ? "好观点，正在等一个开场。"
-                                : "这一方的声音，等你来补充。"}
+                                ? t("Be the first to share a perspective.")
+                                : t("Add your voice to this side.")}
                             </h4>
-                            <p>不必完美，有理有据地表达就很好。</p>
+                            <p>
+                              {t(
+                                "It does not have to be perfect. A reasoned perspective is a great start.",
+                              )}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -972,20 +1097,20 @@ export default function DebateApp({
                   <aside className="right-column">
                     <section className="stats-card panel">
                       <div className="mini-heading">
-                        <h3>持方风向</h3>
+                        <h3>{t("Where we stand")}</h3>
                         <span
                           className={`realtime ${online ? "" : "disconnected"}`}
                         >
                           <span />
-                          {online ? "实时" : "重连中"}
+                          {online ? t("Live") : t("Reconnecting")}
                         </span>
                       </div>
                       <p className="card-subtitle">
-                        不同的声音，组成此刻的我们
+                        {t("Different voices. A shared conversation.")}
                       </p>
                       <div className="stats-percent">
                         <div>
-                          <small>正方</small>
+                          <small>{t("Pro")}</small>
                           <strong>
                             {proPercent}
                             <em>%</em>
@@ -993,7 +1118,7 @@ export default function DebateApp({
                         </div>
                         <span>VS</span>
                         <div>
-                          <small>反方</small>
+                          <small>{t("Con")}</small>
                           <strong>
                             {total ? 100 - proPercent : 0}
                             <em>%</em>
@@ -1009,32 +1134,42 @@ export default function DebateApp({
                       <div className="stats-counts">
                         <span>
                           <i className="filter-dot pro" />
-                          {data.stats.pro} 人
+                          {t("Voters: {count}", { count: data.stats.pro })}
                         </span>
                         <span>
-                          {data.stats.con} 人<i className="filter-dot con" />
+                          {t("Voters: {count}", { count: data.stats.con })}
+                          <i className="filter-dot con" />
                         </span>
                       </div>
                       <div className="stats-note">
                         <Radio size={14} />
                         {total
-                          ? `共 ${total} 人参与持方 · 新动态自动同步`
-                          : "暂无持方，成为第一个表达立场的人"}
+                          ? t(
+                              "Total votes: {count} · Updates appear automatically",
+                              { count: total },
+                            )
+                          : t("No votes yet. Be the first to choose a side.")}
                       </div>
                       {joined ? (
                         <details className="vote-detail">
                           <summary>
-                            查看成员持方
+                            {t("See members’ votes")}
                             <ChevronDown size={14} />
                           </summary>
-                          <p>可查看当前选择；匿名票不显示昵称。</p>
+                          <p>
+                            {t(
+                              "Current choices are shown below. Anonymous votes hide nicknames.",
+                            )}
+                          </p>
                           {data.voters.length ? (
                             <ul className="voter-list">
                               {data.voters.map((v, index) => (
                                 <li key={v.userId || `anonymous-${index}`}>
                                   <span className="voter-name">
-                                    {v.nickname}
-                                    {v.isMine && <small>你</small>}
+                                    {v.anonymous
+                                      ? t("Anonymous member")
+                                      : v.nickname}
+                                    {v.isMine && <small>{t("You")}</small>}
                                   </span>
                                   <span className={`side-label ${v.side}`}>
                                     {sideName(v.side)}
@@ -1044,22 +1179,22 @@ export default function DebateApp({
                             </ul>
                           ) : (
                             <div className="voter-empty">
-                              还没有成员选择持方
+                              {t("No members have voted yet")}
                             </div>
                           )}
                         </details>
                       ) : (
                         <p className="voter-join-note">
-                          加入社群后可查看成员的具体持方。
+                          {t("Join this community to see members’ votes.")}
                         </p>
                       )}
                     </section>
                     <section className="community-card panel">
                       <span className="eyebrow">OUR LITTLE CORNER</span>
                       <div className="community-card-title">
-                        <span className="community-logo large">辩</span>
+                        <span className="community-logo large">{t("D")}</span>
                         <div>
-                          <h3>{data.community.name}</h3>
+                          <h3>{displayName}</h3>
                           <span>
                             {communityId === "unnc"
                               ? "Ningbo Nottingham Debate"
@@ -1071,7 +1206,9 @@ export default function DebateApp({
                       <div className="community-facts">
                         <span>
                           <Users size={15} />
-                          {data.community.memberCount} 位成员
+                          {t("Members: {count}", {
+                            count: data.community.memberCount,
+                          })}
                         </span>
                         <span>
                           {data.community.visibility === "private" ? (
@@ -1080,8 +1217,8 @@ export default function DebateApp({
                             <Globe2 size={14} />
                           )}
                           {data.community.visibility === "private"
-                            ? "私密社区"
-                            : "公开社区"}
+                            ? t("Private community")
+                            : t("Public community")}
                         </span>
                       </div>
                       {isAdmin ? (
@@ -1090,7 +1227,7 @@ export default function DebateApp({
                           onClick={openInvite}
                         >
                           <Plus size={16} />
-                          邀请伙伴加入
+                          {t("Invite people")}
                           <ArrowUpRight size={16} />
                         </button>
                       ) : !joined ? (
@@ -1098,13 +1235,13 @@ export default function DebateApp({
                           className="button outline full"
                           onClick={() => setModal("join")}
                         >
-                          加入社区
+                          {t("Join community")}
                           <ArrowRight size={16} />
                         </button>
                       ) : (
                         <div className="joined-note">
                           <Check size={15} />
-                          很高兴，你也在这里。
+                          {t("Glad to have you here.")}
                         </div>
                       )}
                     </section>
@@ -1112,17 +1249,19 @@ export default function DebateApp({
                       <span className="rules-icon">
                         <Sparkles size={18} />
                       </span>
-                      <h3>有锋芒，也有温度。</h3>
+                      <h3>{t("Be thoughtful. Be kind.")}</h3>
                       <p>
-                        回应观点，而非评判彼此。
+                        {t("Challenge ideas. Respect the people behind them.")}
                         <br />
-                        用理由说话，也给不同留一点空间。
+                        {t(
+                          "Give reasons, and leave room for other perspectives.",
+                        )}
                       </p>
                       <button
                         className="text-button"
                         onClick={() => setModal("guide")}
                       >
-                        看看我们的讨论约定
+                        {t("Read our discussion guidelines")}
                         <ArrowUpRight size={14} />
                       </button>
                     </section>
@@ -1132,7 +1271,7 @@ export default function DebateApp({
                         onClick={() => setModal("settings")}
                       >
                         <Settings2 size={15} />
-                        管理社区与讨论
+                        {t("Manage community")}
                         <ArrowRight size={14} />
                       </button>
                     )}
@@ -1147,18 +1286,18 @@ export default function DebateApp({
               DEBATEHUB
             </span>
             <span>
-              在不同中，看见更多。<span className="footer-dot">·</span> MADE FOR
-              CURIOUS MINDS
+              {t("Different perspectives. Broader horizons.")}
+              <span className="footer-dot">·</span> MADE FOR CURIOUS MINDS
             </span>
           </footer>
         </main>
       </div>
       {toast && (
         <div className="toast" role="status">
-          {toast}
+          {errorText(toast)}
           <button
             className="icon-button"
-            aria-label="关闭提示"
+            aria-label={t("Dismiss notification")}
             onClick={() => setToast("")}
           >
             <X size={15} />
@@ -1167,10 +1306,12 @@ export default function DebateApp({
       )}
       {error && data && (
         <div className="connection-banner" role="status">
-          同步暂时中断，正在重新连接。{error}
+          {t("Updates paused. Reconnecting automatically…")}
+          {errorText(error)}
         </div>
       )}
       <CommunityModals
+        feedback={toast}
         modal={modal}
         setModal={setModal}
         data={data}

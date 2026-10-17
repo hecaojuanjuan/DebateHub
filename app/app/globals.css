@@ -2585,3 +2585,131 @@ footer > span:last-child {
     font-size: 10px;
   }
 }
+
+/* Language selection stays visible in the header and in open dialogs. */
+.language-switch {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f5f5ef;
+}
+.language-switch button {
+  min-width: 38px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: #777d6c;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.language-switch button[aria-pressed="true"] {
+  background: var(--ink);
+  color: #fff;
+}
+.language-switch button:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.modal-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-right: 32px;
+  margin-bottom: 22px;
+}
+.modal-topline .eyebrow {
+  margin-bottom: 0;
+}
+.breadcrumb {
+  min-width: 0;
+}
+.breadcrumb > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-nickname {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-shell[lang="en-US"] .welcome h1 {
+  line-height: 1.17;
+  letter-spacing: -1.2px;
+}
+.app-shell[lang="en-US"] .sidebar-note p {
+  line-height: 1.55;
+}
+.app-shell[lang="en-US"] .art-card strong {
+  font-size: 39px;
+}
+.app-shell[lang="en-US"] .motion-footer {
+  flex-wrap: wrap;
+}
+.app-shell[lang="en-US"] .stance-bottom {
+  gap: 8px;
+}
+@media (max-width: 1180px) {
+  .header-caption {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  .topbar {
+    height: auto;
+    min-height: 64px;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .topbar-actions {
+    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .language-switch button {
+    min-width: 40px;
+    min-height: 38px;
+    font-size: 12px;
+  }
+  .modal-topline {
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .modal-topline .eyebrow {
+    font-size: 8px;
+    letter-spacing: 1px;
+  }
+  .app-shell[lang="en-US"] .welcome h1 {
+    font-size: 32px;
+    line-height: 1.2;
+  }
+  .app-shell[lang="en-US"] .welcome-tags {
+    line-height: 1.6;
+    flex-wrap: wrap;
+  }
+  .app-shell[lang="en-US"] .mini-heading {
+    align-items: flex-start;
+    gap: 10px;
+  }
+}
+
+.modal-notice {
+  margin: 14px 0 18px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--orange);
+  border-radius: 4px;
+  background: #f7eee4;
+  color: #704a36;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}

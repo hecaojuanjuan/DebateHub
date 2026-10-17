@@ -1,5 +1,8 @@
 "use client";
 
+import { useLanguage, LanguageSwitcher } from "./language-provider";
+import { LocalizedForm } from "./localized-form";
+
 import {
   useEffect,
   useRef,
@@ -20,7 +23,8 @@ import {
 import { QRCodeSVG } from "qrcode.react";
 import type { State, Member, JoinRequest, CommunityLink } from "@/lib/types";
 import MemberManager from "./member-manager";
-import { usernameHint, usernamePattern } from "@/lib/usernames";
+import { localizedUrl } from "@/lib/i18n/core";
+import { usernamePattern } from "@/lib/usernames";
 
 export type ModalName =
   | "join"
@@ -44,12 +48,15 @@ export function Modal({
   subtitle,
   children,
   onClose,
+  notice,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   onClose: () => void;
+  notice?: string;
 }) {
+  const { t, errorText } = useLanguage();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -69,13 +76,21 @@ export function Modal({
         <button
           className="icon-button modal-close"
           onClick={onClose}
-          aria-label="关闭"
+          aria-label={t("Close")}
         >
           <X size={20} />
         </button>
-        <span className="eyebrow">DEBATEHUB COMMUNITY</span>
+        <div className="modal-topline">
+          <span className="eyebrow">DEBATEHUB COMMUNITY</span>
+          <LanguageSwitcher />
+        </div>
         <h2>{title}</h2>
         {subtitle && <p className="muted">{subtitle}</p>}
+        {notice && (
+          <p className="modal-notice" role="alert">
+            {errorText(notice)}
+          </p>
+        )}
         {children}
       </div>
     </dialog>
@@ -90,9 +105,10 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 function AccountFields({ register = false }: { register?: boolean }) {
+  const { t } = useLanguage();
   return (
     <>
-      <Field label="用户名（支持中文，用于登录）">
+      <Field label={t("Username (Chinese supported)")}>
         <input
           name="username"
           autoComplete="username"
@@ -101,25 +117,37 @@ function AccountFields({ register = false }: { register?: boolean }) {
           pattern={usernamePattern}
           minLength={2}
           maxLength={64}
-          title={usernameHint}
-          placeholder="例如：禾草卷卷（2–32 个字符）"
+          title={t(
+            "2–32 characters: Chinese or English letters, numbers, dots, underscores, or hyphens. Start with a letter or number. No spaces.",
+          )}
+          placeholder={t("e.g. DebateFan (2–32 characters)")}
           required
         />
-        <small className="username-hint">{usernameHint}</small>
+        <small className="username-hint">
+          {t(
+            "2–32 characters: Chinese or English letters, numbers, dots, underscores, or hyphens. Start with a letter or number. No spaces.",
+          )}
+        </small>
       </Field>
-      <Field label={register ? "设置密码（10–128 字符）" : "密码"}>
+      <Field
+        label={register ? t("Set password (10–128 characters)") : t("Password")}
+      >
         <input
           name="password"
           type="password"
           autoComplete={register ? "new-password" : "current-password"}
           minLength={10}
           maxLength={128}
-          placeholder={register ? "可以用一句容易记住的长句" : "输入你的密码"}
+          placeholder={
+            register
+              ? t("Try a memorable passphrase")
+              : t("Enter your password")
+          }
           required
         />
       </Field>
       {register && (
-        <Field label="再次输入密码">
+        <Field label={t("Confirm password")}>
           <input
             name="passwordConfirm"
             type="password"
@@ -138,6 +166,7 @@ type Props = {
   setModal: (value: ModalName) => void;
   data: State | null;
   busy: boolean;
+  feedback: string;
   invite: string;
   setupToken: string;
   clearSetupToken: () => void;
@@ -161,6 +190,7 @@ export default function CommunityModals({
   setModal,
   data,
   busy,
+  feedback,
   invite,
   setupToken,
   clearSetupToken,
@@ -175,6 +205,9 @@ export default function CommunityModals({
   requests,
   communities,
 }: Props) {
+  const { t, locale, communityName } = useLanguage();
+  const displayName = communityName(data?.community.name, communityId);
+  const localizedInvite = inviteUrl ? localizedUrl(inviteUrl, locale) : "";
   const [nicknameOnly, setNicknameOnly] = useState(false);
   useEffect(() => setNicknameOnly(false), [modal]);
   const close = () => setModal(null);
@@ -195,11 +228,18 @@ export default function CommunityModals({
     <>
       {modal === "join" && (
         <Modal
-          title={invite ? "你被邀请，加入这场对话。" : "加入你的辩论社区。"}
-          subtitle={`加入${data?.community.name || "社区"}，让你的观点被认真听见。`}
+          notice={feedback}
+          title={
+            invite
+              ? t("You’re invited to the conversation.")
+              : t("Join your debate community.")
+          }
+          subtitle={t("Join {name}. Your perspective belongs here.", {
+            name: displayName,
+          })}
           onClose={close}
         >
-          <form
+          <LocalizedForm
             onSubmit={(e) => {
               e.preventDefault();
               const values = Object.fromEntries(new FormData(e.currentTarget));
@@ -208,22 +248,28 @@ export default function CommunityModals({
                 { ...values, invite: values.invite || invite },
                 (result) => {
                   close();
-                  history.replaceState(null, "", location.pathname);
+                  history.replaceState(
+                    null,
+                    "",
+                    location.pathname + location.search,
+                  );
                   notify(
                     result.pending
-                      ? "申请已提交，请等待群主或管理员审核"
+                      ? t(
+                          "Request submitted. Please wait for an owner or admin to approve it.",
+                        )
                       : result.joined
-                        ? "欢迎加入，一起交换观点"
-                        : "邀请已失效，请获取新邀请后重试",
+                        ? t("Welcome! Let’s exchange ideas.")
+                        : t("This invitation has expired. Ask for a new one."),
                   );
                 },
               );
             }}
           >
-            <Field label="你希望大家怎么称呼你？">
+            <Field label={t("What should we call you?")}>
               <input
                 name="nickname"
-                placeholder="输入昵称（2–20 字）"
+                placeholder={t("Enter a nickname (2–20 characters)")}
                 minLength={2}
                 maxLength={20}
                 defaultValue={data?.viewer?.nickname}
@@ -233,10 +279,10 @@ export default function CommunityModals({
             </Field>
             {!data?.viewer && !nicknameOnly && <AccountFields register />}
             {!invite && data?.community.visibility !== "public" && (
-              <Field label="邀请凭证">
+              <Field label={t("Invitation token")}>
                 <input
                   name="invite"
-                  placeholder="粘贴邀请链接或凭证"
+                  placeholder={t("Paste an invitation link or token")}
                   required
                   onChange={(e) => {
                     if (e.target.value.includes("#invite="))
@@ -248,22 +294,26 @@ export default function CommunityModals({
             <p className="form-note">
               <ShieldCheck size={15} />
               {data?.viewer?.username || (!data?.viewer && !nicknameOnly)
-                ? "注册后可在其他设备登录，保留社区身份。请妥善保存账号密码，当前暂不支持自动找回。"
-                : "快速昵称身份只在当前浏览器保留 30 天。加入后可设置账号，防止身份丢失。"}
+                ? t(
+                    "An account keeps your community identity across devices. Save your login details; password recovery is not available yet.",
+                  )
+                : t(
+                    "A quick nickname lasts 30 days in this browser. Set up an account after joining to keep your identity.",
+                  )}
             </p>
             <button className="button dark full" disabled={busy}>
               {busy
-                ? "正在加入…"
+                ? t("Joining…")
                 : !data?.viewer && !nicknameOnly
                   ? data?.community.joinApproval
-                    ? "注册并申请加入"
-                    : "注册并加入社区"
+                    ? t("Register and request to join")
+                    : t("Register and join")
                   : data?.community.joinApproval ||
                       ["removed", "rejected"].includes(
                         data?.viewer?.joinStatus || "",
                       )
-                    ? "提交入群申请"
-                    : "进入社区，开始思考"}
+                    ? t("Request to join")
+                    : t("Join the conversation")}
               <ArrowRight size={16} />
             </button>
             <button
@@ -271,7 +321,7 @@ export default function CommunityModals({
               className="text-button center"
               onClick={() => setModal("login")}
             >
-              已有账号？登录
+              {t("Have an account? Sign in")}
               <ArrowUpRight size={14} />
             </button>
             {!data?.viewer && (
@@ -282,20 +332,23 @@ export default function CommunityModals({
                 onClick={() => setNicknameOnly(!nicknameOnly)}
               >
                 {nicknameOnly
-                  ? "设置用户名和密码，注册账号"
-                  : "先用昵称快速参与"}
+                  ? t("Register with a username and password")
+                  : t("Join quickly with a nickname")}
               </button>
             )}
-          </form>
+          </LocalizedForm>
         </Modal>
       )}
       {modal === "login" && (
         <Modal
-          title="欢迎回来。"
-          subtitle="使用用户名和密码登录，继续你的讨论。"
+          notice={feedback}
+          title={t("Welcome back.")}
+          subtitle={t(
+            "Sign in with your username and password to continue the conversation.",
+          )}
           onClose={close}
         >
-          <form
+          <LocalizedForm
             onSubmit={(e) => {
               e.preventDefault();
               perform(
@@ -307,15 +360,33 @@ export default function CommunityModals({
                 (result) => {
                   if (result.joined) {
                     close();
-                    history.replaceState(null, "", location.pathname);
-                    notify("登录成功，社区身份已恢复");
+                    history.replaceState(
+                      null,
+                      "",
+                      location.pathname + location.search,
+                    );
+                    notify(
+                      t("Signed in. Your community identity is restored."),
+                    );
                   } else if (result.pending) {
                     close();
-                    history.replaceState(null, "", location.pathname);
-                    notify("已登录，入群申请正在等待审核");
+                    history.replaceState(
+                      null,
+                      "",
+                      location.pathname + location.search,
+                    );
+                    notify(
+                      t(
+                        "Signed in. Your request to join is awaiting approval.",
+                      ),
+                    );
                   } else {
                     setModal("join");
-                    notify("已登录，使用有效邀请即可加入这个社区");
+                    notify(
+                      t(
+                        "Signed in. Use a valid invitation to join this community.",
+                      ),
+                    );
                   }
                 },
               );
@@ -323,7 +394,7 @@ export default function CommunityModals({
           >
             <AccountFields />
             <button className="button dark full" disabled={busy}>
-              {busy ? "正在登录…" : "登录"}
+              {busy ? t("Signing in…") : t("Sign in")}
               <ArrowRight size={16} />
             </button>
             <button
@@ -331,7 +402,7 @@ export default function CommunityModals({
               className="text-button center"
               onClick={() => setModal("join")}
             >
-              还没有账号？注册并加入
+              {t("New here? Register and join")}
             </button>
             {communityId === "unnc" && (
               <button
@@ -339,23 +410,32 @@ export default function CommunityModals({
                 className="text-button center"
                 onClick={() => setModal("admin")}
               >
-                初始群主口令入口
+                {t("Initial owner access")}
               </button>
             )}
-          </form>
+          </LocalizedForm>
         </Modal>
       )}
       {modal === "account" && (
         <Modal
-          title={setupToken ? "设置你的群主账号。" : "为当前身份设置账号。"}
+          notice={feedback}
+          title={
+            setupToken
+              ? t("Set up your owner account.")
+              : t("Keep your identity with an account.")
+          }
           subtitle={
             setupToken
-              ? "为宁诺例辩群主设置用户名和密码。此入口仅能使用一次，请勿转发。"
-              : "设置后可在手机和电脑登录，已有权限、投票和发言会保留。"
+              ? t(
+                  "Set a username and password for the UNNC Debate owner. This link works once. Please do not share it.",
+                )
+              : t(
+                  "Sign in on your phone or computer. Your roles, votes, and posts stay with you.",
+                )
           }
           onClose={close}
         >
-          <form
+          <LocalizedForm
             onSubmit={(e) => {
               e.preventDefault();
               perform(
@@ -367,16 +447,26 @@ export default function CommunityModals({
                 () => {
                   clearSetupToken();
                   close();
-                  history.replaceState(null, "", location.pathname);
-                  notify("账号已设置，可使用用户名和密码登录");
+                  history.replaceState(
+                    null,
+                    "",
+                    location.pathname + location.search,
+                  );
+                  notify(
+                    t(
+                      "Account created. You can now sign in with your username and password.",
+                    ),
+                  );
                 },
               );
             }}
           >
-            <Field label="社区昵称（其他成员看到的名字）">
+            <Field label={t("Community nickname (shown to other members)")}>
               <input
                 name="nickname"
-                defaultValue={data?.viewer?.nickname || "社区负责人"}
+                defaultValue={
+                  data?.viewer?.nickname || t("Community organizer")
+                }
                 minLength={2}
                 maxLength={20}
                 autoComplete="nickname"
@@ -386,34 +476,42 @@ export default function CommunityModals({
             <AccountFields register />
             <p className="form-note">
               <ShieldCheck size={15} />
-              请妥善保存账号密码，当前暂不支持自动找回。用户名只用于登录，匿名发表时仍会隐藏社区昵称。
+              {t(
+                "Save your login details; password recovery is not available yet. Your username is only for signing in. Anonymous posts still hide your community nickname.",
+              )}
             </p>
             <button className="button dark full" disabled={busy}>
               {busy
-                ? "正在设置…"
+                ? t("Setting up…")
                 : setupToken
-                  ? "设置账号并以群主身份进入"
-                  : "保存登录账号"}
+                  ? t("Set up account and enter as owner")
+                  : t("Save account")}
               <ShieldCheck size={16} />
             </button>
-          </form>
+          </LocalizedForm>
         </Modal>
       )}
       {modal === "password" && (
         <Modal
-          title="修改登录密码。"
-          subtitle={`当前账号：${data?.viewer?.username || ""}。修改后，其他设备的登录会失效。`}
+          notice={feedback}
+          title={t("Change your password.")}
+          subtitle={t(
+            "Account: {name}. Changing your password signs out other devices.",
+            { name: data?.viewer?.username || "" },
+          )}
           onClose={close}
         >
-          <form
+          <LocalizedForm
             onSubmit={(e) =>
               submit(e, "auth/password", () => {
                 close();
-                notify("密码已修改，其他设备已退出登录");
+                notify(
+                  t("Password changed. Other devices have been signed out."),
+                );
               })
             }
           >
-            <Field label="当前密码">
+            <Field label={t("Current password")}>
               <input
                 name="currentPassword"
                 type="password"
@@ -423,7 +521,7 @@ export default function CommunityModals({
                 required
               />
             </Field>
-            <Field label="新密码（10–128 字符）">
+            <Field label={t("New password (10–128 characters)")}>
               <input
                 name="password"
                 type="password"
@@ -433,7 +531,7 @@ export default function CommunityModals({
                 required
               />
             </Field>
-            <Field label="再次输入新密码">
+            <Field label={t("Confirm new password")}>
               <input
                 name="passwordConfirm"
                 type="password"
@@ -444,61 +542,69 @@ export default function CommunityModals({
               />
             </Field>
             <button className="button dark full" disabled={busy}>
-              {busy ? "正在修改…" : "保存新密码"}
+              {busy ? t("Saving…") : t("Save new password")}
             </button>
-          </form>
+          </LocalizedForm>
         </Modal>
       )}
       {modal === "admin" && (
         <Modal
-          title="欢迎回来，组织者。"
-          subtitle="输入管理员口令，管理社区的每一次观点交锋。"
+          notice={feedback}
+          title={t("Welcome back, organizer.")}
+          subtitle={t("Enter the administrator key to manage your community.")}
           onClose={close}
         >
-          <form
+          <LocalizedForm
             onSubmit={(e) =>
               submit(e, "admin/login", (result) => {
                 setModal(result.hasAccount ? null : "account");
                 notify(
                   result.hasAccount
-                    ? "群主登录成功"
-                    : "群主登录成功，请设置用户名和密码",
+                    ? t("Signed in as owner.")
+                    : t(
+                        "Signed in as owner. Please set up a username and password.",
+                      ),
                 );
               })
             }
           >
-            <Field label="管理员昵称">
+            <Field label={t("Administrator nickname")}>
               <input
                 name="nickname"
-                defaultValue="社区管理员"
+                defaultValue={t("Community admin")}
                 minLength={2}
                 maxLength={20}
                 required
               />
             </Field>
-            <Field label="管理员口令">
+            <Field label={t("Administrator key")}>
               <input
                 type="password"
                 name="key"
                 required
                 autoComplete="current-password"
-                placeholder="输入管理员口令"
+                placeholder={t("Enter the administrator key")}
               />
             </Field>
             <button className="button dark full" disabled={busy}>
-              进入管理
+              {t("Open administration")}
               <ShieldCheck size={16} />
             </button>
-          </form>
+          </LocalizedForm>
         </Modal>
       )}
       {modal === "invite" && (
         <Modal
-          title="让更多好观点，加入进来。"
+          notice={feedback}
+          title={t("Make room for more perspectives.")}
           subtitle={
             data?.community.joinApproval
-              ? "邀请链接 7 天有效。成员注册或登录后提交申请，由群主或管理员审核。"
-              : "邀请链接 7 天有效。新成员注册账号加入，已有账号的成员可直接登录。"
+              ? t(
+                  "Invitations last 7 days. Members register or sign in, then request approval from an owner or admin.",
+                )
+              : t(
+                  "Invitations last 7 days. New members register to join; existing members can sign in.",
+                )
           }
           onClose={close}
         >
@@ -506,24 +612,34 @@ export default function CommunityModals({
             <>
               <div className="qr-wrapper">
                 <QRCodeSVG
-                  value={inviteUrl}
+                  value={localizedInvite}
                   size={200}
                   level="M"
                   marginSize={3}
                 />
-                <strong>{data?.community.name} · 扫码加入</strong>
-                <small>一起交换观点，练习思考。</small>
+                <strong>
+                  {t("{name} · Scan to join", { name: displayName })}
+                </strong>
+                <small>{t("Exchange ideas. Practice thinking.")}</small>
               </div>
               <div className="copy-box">
-                <input readOnly value={inviteUrl} aria-label="邀请链接" />
+                <input
+                  readOnly
+                  value={localizedInvite}
+                  aria-label={t("Invitation link")}
+                />
                 <button
                   className="icon-button"
-                  aria-label="复制邀请链接"
+                  aria-label={t("Copy invitation link")}
                   onClick={() =>
                     void navigator.clipboard
-                      .writeText(inviteUrl)
-                      .then(() => notify("邀请链接已复制"))
-                      .catch(() => notify("请选中链接手动复制"))
+                      .writeText(localizedInvite)
+                      .then(() => notify(t("Invitation link copied.")))
+                      .catch(() =>
+                        notify(
+                          t("Please select the link and copy it manually."),
+                        ),
+                      )
                   }
                 >
                   <Copy size={18} />
@@ -546,33 +662,44 @@ export default function CommunityModals({
                   URL.revokeObjectURL(url);
                 }}
               >
-                下载邀请二维码
+                {t("Download invitation QR code")}
                 <ArrowDown size={16} />
               </button>
             </>
           ) : (
             <div className="empty">
               <Radio className="spin" />
-              <p>{busy ? "正在生成邀请…" : "生成失败，请关闭后重试。"}</p>
+              <p>
+                {busy
+                  ? t("Creating invitation…")
+                  : t(
+                      "Unable to create an invitation. Close this window and try again.",
+                    )}
+              </p>
             </div>
           )}
         </Modal>
       )}
       {(modal === "publish" || modal === "editTopic") && (
         <Modal
+          notice={feedback}
           title={
             modal === "editTopic"
-              ? "修改这道辩题。"
-              : "一个好问题，打开新的可能。"
+              ? t("Edit this motion.")
+              : t("A good question opens new possibilities.")
           }
           subtitle={
             modal === "editTopic"
-              ? "已有观点与投票会保留；有人参与后，双方立场名称不可更改。"
-              : "写清辩题与双方立场，让讨论更有方向。"
+              ? t(
+                  "Existing posts and votes are preserved. Side labels cannot change once someone has participated.",
+                )
+              : t(
+                  "Define the motion and both sides to give the discussion a clear direction.",
+                )
           }
           onClose={close}
         >
-          <form
+          <LocalizedForm
             key={modal === "editTopic" ? topic?.id : "new"}
             onSubmit={(e) =>
               submit(
@@ -581,7 +708,11 @@ export default function CommunityModals({
                 (result) => {
                   selectTopic(result.id || topic?.id);
                   close();
-                  notify(modal === "editTopic" ? "辩题已更新" : "新辩题已发布");
+                  notify(
+                    modal === "editTopic"
+                      ? t("Motion updated.")
+                      : t("New motion published."),
+                  );
                 },
               )
             }
@@ -589,29 +720,33 @@ export default function CommunityModals({
             {modal === "editTopic" && (
               <input type="hidden" name="topicId" value={topic?.id} />
             )}
-            <Field label="辩题">
+            <Field label={t("Motion")}>
               <input
                 name="title"
                 defaultValue={modal === "editTopic" ? topic?.title : ""}
-                placeholder="例如：大学教育应以通识教育为主"
+                placeholder={t(
+                  "e.g. Universities should prioritize general education",
+                )}
                 minLength={5}
                 maxLength={120}
                 required
               />
             </Field>
-            <Field label="背景与讨论范围">
+            <Field label={t("Background and scope")}>
               <textarea
                 name="description"
                 defaultValue={modal === "editTopic" ? topic?.description : ""}
                 rows={3}
                 minLength={5}
                 maxLength={3000}
-                placeholder="写下背景、定义或希望讨论的方向…"
+                placeholder={t(
+                  "Add context, definitions, or questions to explore…",
+                )}
                 required
               />
             </Field>
             <div className="form-grid">
-              <Field label="正方立场">
+              <Field label={t("Pro position")}>
                 <input
                   name="proLabel"
                   defaultValue={modal === "editTopic" ? topic?.proLabel : ""}
@@ -621,11 +756,11 @@ export default function CommunityModals({
                   }
                   minLength={2}
                   maxLength={80}
-                  placeholder="正方支持的观点"
+                  placeholder={t("The position supported by the pro side")}
                   required
                 />
               </Field>
-              <Field label="反方立场">
+              <Field label={t("Con position")}>
                 <input
                   name="conLabel"
                   defaultValue={modal === "editTopic" ? topic?.conLabel : ""}
@@ -635,16 +770,16 @@ export default function CommunityModals({
                   }
                   minLength={2}
                   maxLength={80}
-                  placeholder="反方支持的观点"
+                  placeholder={t("The position supported by the con side")}
                   required
                 />
               </Field>
             </div>
-            <Field label="分类">
+            <Field label={t("Category")}>
               <input
                 name="category"
                 defaultValue={
-                  modal === "editTopic" ? topic?.category : "每周训练"
+                  modal === "editTopic" ? topic?.category : t("Weekly practice")
                 }
                 minLength={2}
                 maxLength={20}
@@ -652,43 +787,48 @@ export default function CommunityModals({
               />
             </Field>
             <button className="button dark full" disabled={busy}>
-              {modal === "editTopic" ? "保存修改" : "发布，开始讨论"}
+              {modal === "editTopic" ? t("Save changes") : t("Publish motion")}
               <ArrowUpRight size={16} />
             </button>
-          </form>
+          </LocalizedForm>
         </Modal>
       )}
       {modal === "settings" && (
         <Modal
-          title="给好的讨论，一个好空间。"
-          subtitle="管理社群的可见性、邀请和讨论状态。"
+          notice={feedback}
+          title={t("A good space for good discussion.")}
+          subtitle={t("Manage visibility, invitations, and discussion status.")}
           onClose={close}
         >
           <div className="setting-row">
             <div>
-              <strong>成员与入群审核</strong>
+              <strong>{t("Members and join requests")}</strong>
               <p>
                 {data?.pendingCount
-                  ? `${data.pendingCount} 条申请待审核`
-                  : "查看全部成员、处理入群申请"}
+                  ? t("Pending requests: {count}", { count: data.pendingCount })
+                  : t("See all members and review join requests")}
               </p>
             </div>
             <button
               className="button small outline"
               onClick={() => setModal("members")}
             >
-              管理成员
+              {t("Manage membership")}
             </button>
           </div>
           {data?.viewer?.role === "owner" && (
             <>
               <div className="setting-row">
                 <div>
-                  <strong>入群需审核</strong>
+                  <strong>{t("Require approval to join")}</strong>
                   <p>
                     {data.community.joinApproval
-                      ? "受邀成员须经群主或管理员同意"
-                      : "默认关闭，邀请链接可直接加入"}
+                      ? t(
+                          "Invited members need approval from an owner or admin",
+                        )
+                      : t(
+                          "Off by default. A valid invitation grants direct access",
+                        )}
                   </p>
                 </div>
                 <button
@@ -701,22 +841,26 @@ export default function CommunityModals({
                       () =>
                         notify(
                           data.community.joinApproval
-                            ? "已关闭审核，新邀请可直接加入；已有申请仍需处理"
-                            : "已开启入群审核",
+                            ? t(
+                                "Approval disabled. New invitations allow direct joining; existing requests still need review.",
+                              )
+                            : t("Approval is now required to join."),
                         ),
                     )
                   }
                 >
-                  {data.community.joinApproval ? "关闭审核" : "开启审核"}
+                  {data.community.joinApproval
+                    ? t("Disable approval")
+                    : t("Enable approval")}
                 </button>
               </div>
               <div className="setting-row">
                 <div>
-                  <strong>社群可见性</strong>
+                  <strong>{t("Community visibility")}</strong>
                   <p>
                     {data.community.visibility === "private"
-                      ? "仅受邀成员能查看和参与"
-                      : "任何人能查看，加入后能参与"}
+                      ? t("Only members can view and participate")
+                      : t("Anyone can read; members can participate")}
                   </p>
                 </div>
                 <button
@@ -732,8 +876,8 @@ export default function CommunityModals({
                   }
                 >
                   {data.community.visibility === "private"
-                    ? "设为公开"
-                    : "设为私密"}
+                    ? t("Make public")
+                    : t("Make private")}
                 </button>
               </div>
             </>
@@ -741,11 +885,11 @@ export default function CommunityModals({
           {topic && (
             <div className="setting-row">
               <div>
-                <strong>当前辩题</strong>
+                <strong>{t("Current motion")}</strong>
                 <p>
                   {topic.status === "open"
-                    ? "成员可以选择持方与发言"
-                    : "已结束，可查看历史讨论"}
+                    ? t("Members can choose a side and post")
+                    : t("Closed. Previous discussions remain readable")}
                 </p>
               </div>
               <button
@@ -758,7 +902,9 @@ export default function CommunityModals({
                   })
                 }
               >
-                {topic.status === "open" ? "结束讨论" : "重新开放"}
+                {topic.status === "open"
+                  ? t("Close discussion")
+                  : t("Reopen discussion")}
               </button>
             </div>
           )}
@@ -766,24 +912,32 @@ export default function CommunityModals({
             <>
               <div className="setting-row">
                 <div>
-                  <strong>修改辩题</strong>
-                  <p>编辑题目、背景和分类</p>
+                  <strong>{t("Edit motion")}</strong>
+                  <p>{t("Edit the title, background, and category")}</p>
                 </div>
                 <button
                   className="button small outline"
                   disabled={busy}
                   onClick={() => setModal("editTopic")}
                 >
-                  修改辩题
+                  {t("Edit motion")}
                 </button>
               </div>
               <div className="setting-row">
                 <div>
-                  <strong>{topic.withdrawn ? "恢复辩题" : "撤回辩题"}</strong>
+                  <strong>
+                    {topic.withdrawn
+                      ? t("Restore motion")
+                      : t("Withdraw motion")}
+                  </strong>
                   <p>
                     {topic.withdrawn
-                      ? "恢复后成员可再次看到，讨论状态保持原样"
-                      : "向成员隐藏，保留全部讨论和投票"}
+                      ? t(
+                          "Members will see it again. Its open or closed status stays the same",
+                        )
+                      : t(
+                          "Hide from members while preserving all posts and votes",
+                        )}
                   </p>
                 </div>
                 <button
@@ -794,37 +948,45 @@ export default function CommunityModals({
                       ? perform(
                           "topics/withdraw",
                           { topicId: topic.id, withdrawn: false },
-                          () => notify("辩题已恢复"),
+                          () => notify(t("Motion restored.")),
                         )
                       : setModal("withdrawTopic")
                   }
                 >
-                  {topic.withdrawn ? "恢复辩题" : "撤回辩题"}
+                  {topic.withdrawn ? t("Restore motion") : t("Withdraw motion")}
                 </button>
               </div>
             </>
           )}
           <div className="setting-row">
             <div>
-              <strong>邀请链接</strong>
-              <p>使所有未使用的邀请失效</p>
+              <strong>{t("Invitation link")}</strong>
+              <p>{t("Invalidate all outstanding invitation links")}</p>
             </div>
             <button
               className="button small outline danger"
               disabled={busy}
               onClick={() =>
                 perform("invites/revoke", {}, () =>
-                  notify("全部邀请已撤销，已加入的成员不受影响"),
+                  notify(
+                    t(
+                      "All invitations revoked. Existing members keep their access.",
+                    ),
+                  ),
                 )
               }
             >
-              撤销全部邀请
+              {t("Revoke all invitations")}
             </button>
           </div>
           <p className="form-note">
             {data?.viewer?.role === "owner"
-              ? "你是社群群主，可设置管理员并管理社群。"
-              : "你是本社群管理员，可发布辩题、邀请成员并管理讨论。"}
+              ? t(
+                  "You own this community and can appoint admins and manage its settings.",
+                )
+              : t(
+                  "You are an admin here. You can publish motions, invite members, and moderate discussion.",
+                )}
           </p>
         </Modal>
       )}
@@ -832,8 +994,11 @@ export default function CommunityModals({
         data &&
         ["owner", "admin"].includes(data.viewer?.role || "") && (
           <Modal
-            title="成员与入群审核。"
-            subtitle="群主和管理员可查看全部成员、审核申请及移出普通成员；群主可任命管理员。"
+            notice={feedback}
+            title={t("Members and join requests.")}
+            subtitle={t(
+              "Owners and admins can view members, review requests, and remove regular members. Only the owner can appoint admins.",
+            )}
             onClose={close}
           >
             <MemberManager
@@ -846,32 +1011,41 @@ export default function CommunityModals({
             />
             <p className="form-note">
               <ShieldCheck size={15} />
-              管理员权限仅在当前社群生效。群主身份不可通过此页面修改。
+              {t(
+                "Admin permissions apply only to this community. The owner cannot be changed here.",
+              )}
             </p>
           </Modal>
         )}
       {modal === "switch" && (
         <Modal
-          title="我的社群。"
-          subtitle="不同的伙伴，不同的问题，同样认真地思考。"
+          notice={feedback}
+          title={t("My communities.")}
+          subtitle={t(
+            "Different people. Different questions. The same curiosity.",
+          )}
           onClose={close}
         >
           {communities ? (
             communities.map((c) => (
-              <a className="community-option" key={c.id} href={`/c/${c.id}`}>
-                <span className="community-logo">辩</span>
+              <a
+                className="community-option"
+                key={c.id}
+                href={`/c/${c.id}?lang=${locale}`}
+              >
+                <span className="community-logo">{t("D")}</span>
                 <div>
-                  <strong>{c.name}</strong>
+                  <strong>{communityName(c.name, c.id)}</strong>
                   <small>
                     {c.role === "owner"
-                      ? "群主"
+                      ? t("Owner")
                       : c.role === "admin"
-                        ? "管理员"
-                        : "成员"}
+                        ? t("Admin")
+                        : t("Member")}
                   </small>
                 </div>
                 {c.id === communityId ? (
-                  <span className="owner-badge">当前社群</span>
+                  <span className="owner-badge">{t("Current community")}</span>
                 ) : (
                   <ArrowUpRight size={16} />
                 )}
@@ -880,14 +1054,14 @@ export default function CommunityModals({
           ) : (
             <div className="empty">
               <Radio className="spin" />
-              <p>正在加载你的社群…</p>
+              <p>{t("Loading your communities…")}</p>
             </div>
           )}
           <button
             className="button dark full"
             onClick={() => setModal("community")}
           >
-            ＋ 创建新社群
+            {t("+ Create a community")}
           </button>
           <button
             className="button outline full account-button"
@@ -895,25 +1069,33 @@ export default function CommunityModals({
               setModal(data?.viewer?.username ? "password" : "account")
             }
           >
-            {data?.viewer?.username ? "修改登录密码" : "设置用户名和密码"}
+            {data?.viewer?.username
+              ? t("Change password")
+              : t("Set up an account")}
           </button>
           {data?.viewer?.username && (
-            <p className="form-note">登录用户名：{data.viewer.username}</p>
+            <p className="form-note">
+              {t("Username: ")}
+              {data.viewer.username}
+            </p>
           )}
           {data?.viewer?.role && data.viewer.role !== "owner" && (
             <button
               className="text-button center danger"
               onClick={() => setModal("leave")}
             >
-              退出当前社群
+              {t("Leave this community")}
             </button>
           )}
         </Modal>
       )}
       {modal === "leave" && (
         <Modal
-          title="退出当前社群？"
-          subtitle="退出后将无法访问私密社区，历史观点和投票会保留。账号及其他社群不受影响。"
+          notice={feedback}
+          title={t("Leave this community?")}
+          subtitle={t(
+            "You will lose access if this community is private. Your posts and votes remain, and your account and other communities are unaffected.",
+          )}
           onClose={close}
         >
           <button
@@ -922,18 +1104,23 @@ export default function CommunityModals({
             onClick={() =>
               perform("members/leave", {}, () => {
                 close();
-                notify("已退出当前社群，账号仍可登录");
+                notify(
+                  t("You have left this community. Your account still works."),
+                );
               })
             }
           >
-            确认退出社群
+            {t("Confirm leaving")}
           </button>
         </Modal>
       )}
       {modal === "withdrawTopic" && topic && (
         <Modal
-          title="撤回这道辩题？"
-          subtitle="成员将无法查看和参与这道辩题，已有观点、回复与投票全部保留。群主或管理员可在全部辩题中恢复。"
+          notice={feedback}
+          title={t("Withdraw this motion?")}
+          subtitle={t(
+            "Members will no longer see or participate in this motion. All posts, replies, and votes remain. An owner or admin can restore it from All motions.",
+          )}
           onClose={close}
         >
           <button
@@ -945,42 +1132,45 @@ export default function CommunityModals({
                 { topicId: topic.id, withdrawn: true },
                 () => {
                   close();
-                  notify("辩题已撤回，成员端已隐藏");
+                  notify(t("Motion withdrawn and hidden from members."));
                 },
               )
             }
           >
-            确认撤回辩题
+            {t("Confirm withdrawal")}
           </button>
         </Modal>
       )}
       {modal === "community" && (
         <Modal
-          title="为新的伙伴，开一个空间。"
-          subtitle="每个社区有独立的辩题、成员、邀请和讨论。"
+          notice={feedback}
+          title={t("Create a space for your people.")}
+          subtitle={t(
+            "Each community has its own motions, members, invitations, and discussions.",
+          )}
           onClose={close}
         >
-          <form
+          <LocalizedForm
             onSubmit={(e) =>
               submit(e, "communities/create", (result) =>
-                window.location.assign(`/c/${result.slug}`),
+                window.location.assign(`/c/${result.slug}?lang=${locale}`),
               )
             }
           >
-            <Field label="社区名称">
+            <Field label={t("Community name")}>
               <input name="name" minLength={2} maxLength={40} required />
             </Field>
-            <Field label="地址标识（小写字母、数字、短横线）">
+            <Field label={t("URL name (lowercase letters, numbers, hyphens)")}>
               <input
                 name="slug"
                 pattern="[a-z][a-z0-9-]{1,39}"
                 minLength={2}
                 maxLength={40}
                 required
-                placeholder="例如 debate-club"
+                placeholder={t("e.g. debate-club")}
               />
             </Field>
-            <Field label="社区介绍">
+            <Field label={t("Community description")}>
               <textarea
                 name="description"
                 minLength={2}
@@ -990,33 +1180,42 @@ export default function CommunityModals({
               />
             </Field>
             <button className="button dark full" disabled={busy}>
-              创建私密社区
+              {t("Create private community")}
               <ArrowRight size={16} />
             </button>
-          </form>
+          </LocalizedForm>
         </Modal>
       )}
       {modal === "guide" && (
         <Modal
-          title="观点不同，也能一起向前。"
-          subtitle="欢迎来到 DebateHub，一个认真思考、自由表达的地方。"
+          notice={feedback}
+          title={t("Different views. Moving forward together.")}
+          subtitle={t(
+            "Welcome to DebateHub, a place for thoughtful discussion and open expression.",
+          )}
           onClose={close}
         >
           {[
             [
               "01",
-              "进入你的社区",
-              "扫描管理员的邀请二维码，注册账号或登录后加入。公开社区可以直接浏览并加入。",
+              t("Join your community"),
+              t(
+                "Scan an admin’s invitation QR code, then register or sign in to join. Public communities can be browsed and joined directly.",
+              ),
             ],
             [
               "02",
-              "选择持方，给出理由",
-              "选择正方或反方，再发表观点。你可以改变持方；历史发言保留发表时的立场。",
+              t("Choose a side. Share your reasons."),
+              t(
+                "Choose pro or con before posting. You can change sides; earlier posts keep the position held when they were written.",
+              ),
             ],
             [
               "03",
-              "回应观点，尊重彼此",
-              "用论据支持判断，用回复推动讨论。持方比例反映选择，与发言条数无关。",
+              t("Discuss ideas. Respect each other."),
+              t(
+                "Support your views with evidence and move the discussion forward through replies. Vote ratios count people, not posts.",
+              ),
             ],
           ].map(([n, title, content]) => (
             <div className="guide-step" key={n}>
@@ -1028,18 +1227,23 @@ export default function CommunityModals({
             </div>
           ))}
           <p className="form-note">
-            用户名用于登录，社区昵称用于发言。也可先用昵称快速参与，再在「我的社群」设置账号以保留身份。请妥善保存账号密码，当前暂不支持自动找回。
+            {t(
+              "Your username is for signing in; your nickname appears on posts. You can join with a nickname first and create an account in My communities later. Save your login details; password recovery is not available yet.",
+            )}
           </p>
           <button className="button dark full" onClick={close}>
-            明白了，一起思考
+            {t("Got it. Let’s think together.")}
             <ArrowRight size={16} />
           </button>
         </Modal>
       )}
       {deleteTarget && (
         <Modal
-          title="移除这条观点？"
-          subtitle="移除后保留回复关系，正文不可恢复。"
+          notice={feedback}
+          title={t("Remove this post?")}
+          subtitle={t(
+            "Replies stay in place, but the post’s text cannot be recovered.",
+          )}
           onClose={() => setDeleteTarget(null)}
         >
           <button
@@ -1048,11 +1252,11 @@ export default function CommunityModals({
             onClick={() =>
               perform("comments/delete", { commentId: deleteTarget }, () => {
                 setDeleteTarget(null);
-                notify("观点已移除");
+                notify(t("Post removed."));
               })
             }
           >
-            确认移除
+            {t("Confirm removal")}
             <Trash2 size={16} />
           </button>
         </Modal>

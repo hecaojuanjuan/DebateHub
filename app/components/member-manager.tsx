@@ -1,5 +1,7 @@
 "use client";
 
+import { useLanguage } from "./language-provider";
+
 import { useState } from "react";
 import type { JoinRequest, Member, State } from "@/lib/types";
 
@@ -23,14 +25,17 @@ export default function MemberManager({
   perform,
   notify,
 }: Props) {
+  const { t, formatDate } = useLanguage();
   const [removing, setRemoving] = useState<Member | null>(null);
   const owner = data.viewer?.role === "owner";
   if (removing)
     return (
       <div className="management-confirm" role="alert">
-        <strong>移出「{removing.nickname}」？</strong>
+        <strong>{t("Remove {name}?", { name: removing.nickname })}</strong>
         <p>
-          对方将失去社区访问权限，历史发言和投票保留。再次加入需管理员审核。
+          {t(
+            "They will lose community access. Their posts and votes remain. Rejoining requires admin approval.",
+          )}
         </p>
         <div className="management-actions">
           <button
@@ -39,18 +44,18 @@ export default function MemberManager({
             onClick={() =>
               perform("members/remove", { userId: removing.id }, () => {
                 setRemoving(null);
-                notify("已移出成员");
+                notify(t("Member removed."));
               })
             }
           >
-            确认移出
+            {t("Confirm member removal")}
           </button>
           <button
             className="button small outline"
             disabled={busy}
             onClick={() => setRemoving(null)}
           >
-            取消
+            {t("Cancel")}
           </button>
         </div>
       </div>
@@ -58,10 +63,11 @@ export default function MemberManager({
   return (
     <>
       <h3 className="management-heading">
-        待审核申请 <span>{requests?.length ?? "…"}</span>
+        {t("Pending requests")}
+        <span>{requests?.length ?? "…"}</span>
       </h3>
       {requests?.length === 0 && (
-        <p className="management-empty">暂无待审核申请。</p>
+        <p className="management-empty">{t("No pending requests.")}</p>
       )}
       {requests?.map((request) => (
         <div className="member-row" key={request.id}>
@@ -69,10 +75,7 @@ export default function MemberManager({
           <div className="member-info">
             <strong>{request.nickname}</strong>
             <small>
-              申请加入 ·{" "}
-              {new Date(request.createdAt).toLocaleDateString("zh-CN", {
-                timeZone: "Asia/Shanghai",
-              })}
+              {t("Requested to join · ")} {formatDate(request.createdAt)}
             </small>
           </div>
           <div className="management-actions">
@@ -83,11 +86,11 @@ export default function MemberManager({
                 perform(
                   "members/review",
                   { userId: request.id, decision: "approve" },
-                  () => notify("已同意加入社区"),
+                  () => notify(t("Request approved.")),
                 )
               }
             >
-              同意
+              {t("Approve")}
             </button>
             <button
               className="button small outline"
@@ -96,43 +99,46 @@ export default function MemberManager({
                 perform(
                   "members/review",
                   { userId: request.id, decision: "reject" },
-                  () => notify("已拒绝这次申请"),
+                  () => notify(t("Request declined.")),
                 )
               }
             >
-              拒绝
+              {t("Decline")}
             </button>
           </div>
         </div>
       ))}
       <h3 className="management-heading">
-        全部成员 <span>{members?.length ?? "…"}</span>
+        {t("All members")}
+        <span>{members?.length ?? "…"}</span>
       </h3>
       {owner && (
         <p className="management-empty">
-          添加管理员：找到已加入的成员，点击右侧「设为管理员」。
+          {t(
+            "To add an admin, find an existing member and choose “Make admin”.",
+          )}
         </p>
       )}
-      {!members && <p className="management-empty">正在加载成员…</p>}
+      {!members && <p className="management-empty">{t("Loading members…")}</p>}
       {members?.map((member) => (
         <div className="member-row" key={member.id}>
           <span className="mini-avatar">{member.nickname.slice(0, 1)}</span>
           <div className="member-info">
             <strong>
               {member.nickname}
-              {member.id === data.viewer?.id ? "（你）" : ""}
+              {member.id === data.viewer?.id ? t(" (you)") : ""}
             </strong>
             <small>
               {member.role === "owner"
-                ? "群主"
+                ? t("Owner")
                 : member.role === "admin"
-                  ? "管理员"
-                  : "社群成员"}
+                  ? t("Admin")
+                  : t("Community member")}
             </small>
           </div>
           <div className="management-actions">
             {member.role === "owner" ? (
-              <span className="owner-badge">群主</span>
+              <span className="owner-badge">{t("Owner")}</span>
             ) : (
               <>
                 {owner && (
@@ -149,13 +155,17 @@ export default function MemberManager({
                         () =>
                           notify(
                             member.role === "admin"
-                              ? "已撤销管理员权限"
-                              : "已设为管理员，可发布与管理辩题",
+                              ? t("Admin permissions removed.")
+                              : t(
+                                  "Admin appointed. They can now publish and manage motions.",
+                                ),
                           ),
                       )
                     }
                   >
-                    {member.role === "admin" ? "撤销管理员" : "设为管理员"}
+                    {member.role === "admin"
+                      ? t("Remove admin role")
+                      : t("Make admin")}
                   </button>
                 )}
                 {member.id !== data.viewer?.id &&
@@ -165,7 +175,7 @@ export default function MemberManager({
                       disabled={busy}
                       onClick={() => setRemoving(member)}
                     >
-                      移出
+                      {t("Remove member")}
                     </button>
                   )}
               </>
